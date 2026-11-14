@@ -30,7 +30,7 @@ Odds are based on money staked, not the number of people, and they change every 
 - Small enough to build in about two weeks.
 
 ### 1.4 Out of scope
-Real money or payments, external data or APIs, a graphical or web interface, and notifications outside the app.
+Real money or payments, external data or APIs.
 
 ## 2. User management
 
