@@ -115,6 +115,10 @@ Two roles. The admin also acts as the moderator.
 ### 4.1 Storage
 Data is saved in JSON files, loaded at start-up and saved after every change. SQLite is a possible upgrade, but only the storage module would change.
 
+All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 1) next to the `users`, `groups`, `events`, `bets` and `polls` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
+
+Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected.
+
 ### 4.2 Entities
 
 **User**
@@ -180,7 +184,7 @@ Pool, stake per side, odds and the leaderboard are calculated from the bets and 
 ```json
 {
   "event": {"id": "e7", "title": "Anna is late to dinner", "status": "open",
-            "close_time": "2026-11-20T19:00", "outcome": null, "flags": []},
+            "close_time": "2026-11-20T19:00:00+00:00", "outcome": null, "flags": []},
   "bets": [
     {"user_id": "u1", "side": "yes", "stake": 10},
     {"user_id": "u2", "side": "yes", "stake": 10},
