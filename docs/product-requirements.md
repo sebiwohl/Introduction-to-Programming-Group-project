@@ -115,6 +115,8 @@ Two roles. The admin also acts as the moderator.
 ### 4.1 Storage
 Data is saved in JSON files, loaded at start-up and saved after every change. SQLite is a possible upgrade, but only the storage module would change.
 
+All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 1) next to the `users`, `groups`, `events`, `bets` and `polls` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
+
 ### 4.2 Entities
 
 **User**
