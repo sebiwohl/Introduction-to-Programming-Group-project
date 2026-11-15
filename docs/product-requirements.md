@@ -193,6 +193,8 @@ Pool, stake per side, odds and the leaderboard are calculated from the bets and 
 Pool 50, "yes" odds 1.25, "no" odds 5.0.
 
 ### 4.5 Data rules
+- Money has 2 decimals in the app (12.50) and is stored in the data file as whole cents (1250). `src/convert.py` is the only place that converts between the two.
+- Times are timezone-aware in the app and stored as ISO 8601 strings with an offset.
 - A balance can never go below zero.
 - Stakes are deducted when a bet is placed, and refunded or paid out when the event ends.
 - The total paid out equals the pool, and refunds equal the stakes.

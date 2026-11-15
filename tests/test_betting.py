@@ -1,6 +1,6 @@
 """Tests for src/betting.py: odds, placing bets, refunds, rounding and payouts."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
@@ -27,8 +27,9 @@ from src.models import (
     User,
 )
 
-NOW = datetime(2026, 11, 20, 12, 0)  # before close: betting allowed
-CLOSE = datetime(2026, 11, 20, 19, 0)
+# Times are timezone-aware, as storage.py requires.
+NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)  # before close: betting allowed
+CLOSE = datetime(2026, 11, 20, 19, 0, tzinfo=timezone.utc)
 AFTER = CLOSE + timedelta(hours=1)  # after close: resolving allowed
 
 
