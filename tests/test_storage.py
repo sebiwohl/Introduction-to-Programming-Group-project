@@ -488,6 +488,126 @@ def test_load_with_recovery_restores_and_warns(path: Path) -> None:
     assert balance_of(path) == 2
 
 
+def test_load_with_recovery_does_not_undo_a_newer_save(
+    path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the file is fine again once the lock is held, no older backup is restored.
+
+    Simulates the race: this session's first read saw a broken file, but another
+    session restored and saved a newer version before this one got the lock.
+    """
+    save_balances(path, 3)
+    before = path.read_bytes()
+    real_load = storage.load_data
+    calls: list[Any] = []
+
+    def stale_first_load(file: Any = None) -> dict[str, Any]:
+        """Fail the first read as if it saw the broken file, then read normally."""
+        calls.append(file)
+        if len(calls) == 1:
+            raise StorageError("data.json is not valid JSON")
+        return real_load(file)
+
+    monkeypatch.setattr(storage, "load_data", stale_first_load)
+    data, warning = storage.load_with_recovery(path)
+    assert warning is None
+    assert find(data, "users", "u1")["balance"] == 3
+    assert path.read_bytes() == before
+    assert list(path.parent.glob("data.corrupt-*.json")) == []
+
+
+# Windows: replace while the target is busy ---------------------------------
+
+def save_with_busy_replace(
+    path: Path, valid: dict[str, Any], monkeypatch: pytest.MonkeyPatch, failures: int
+) -> list[Any]:
+    """Save a change while os.replace fails `failures` times with PermissionError.
+
+    Retrying is switched on and the delay set to 0. Returns the list of replace calls.
+    """
+    storage.save_data(valid, path)
+    monkeypatch.setattr(storage, "RETRY_REPLACE", True)
+    monkeypatch.setattr(storage, "REPLACE_ATTEMPTS", 5)
+    monkeypatch.setattr(storage, "REPLACE_DELAY_SECONDS", 0)
+    real_replace = os.replace
+    calls: list[Any] = []
+
+    def busy_replace(source: Any, target: Any) -> None:
+        """Raise PermissionError for the first `failures` calls, then replace."""
+        calls.append(target)
+        if len(calls) <= failures:
+            raise PermissionError("file is in use")
+        real_replace(source, target)
+
+    monkeypatch.setattr(os, "replace", busy_replace)
+    changed = copy.deepcopy(valid)
+    changed["users"][0]["balance"] = 7
+    try:
+        storage.save_data(changed, path)
+    finally:
+        monkeypatch.undo()
+    return calls
+
+
+def test_replace_is_retried_while_target_is_busy(
+    path: Path, valid: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A replace that fails a few times with PermissionError still saves."""
+    calls = save_with_busy_replace(path, valid, monkeypatch, failures=3)
+    assert len(calls) == 4
+    assert balance_of(path) == 7
+    assert list(path.parent.rglob("*.tmp")) == []
+
+
+def test_replace_gives_up_and_keeps_old_file(
+    path: Path, valid: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the target stays busy, the error is raised and the old file is unchanged."""
+    storage.save_data(valid, path)
+    before = path.read_bytes()
+    with pytest.raises(PermissionError):
+        save_with_busy_replace(path, valid, monkeypatch, failures=99)
+    assert path.read_bytes() == before
+    assert list(path.parent.rglob("*.tmp")) == []
+
+
+def test_replace_is_not_retried_when_retry_is_off(
+    path: Path, valid: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without retrying (non-Windows), a PermissionError is raised on the first try."""
+    storage.save_data(valid, path)
+    monkeypatch.setattr(storage, "RETRY_REPLACE", False)
+    calls: list[Any] = []
+
+    def denied_replace(source: Any, target: Any) -> None:
+        """Always refuse."""
+        calls.append(target)
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(os, "replace", denied_replace)
+    with pytest.raises(PermissionError):
+        storage.save_data(valid, path)
+    monkeypatch.undo()
+    assert len(calls) == 1
+
+
+def test_save_succeeds_while_a_reader_briefly_holds_the_file(
+    path: Path, valid: dict[str, Any]
+) -> None:
+    """A real open reader (which blocks os.replace on Windows) does not break a save."""
+    storage.save_data(valid, path)
+    reader = open(path, "rb")
+    timer = threading.Timer(0.2, reader.close)
+    timer.start()
+    try:
+        valid["users"][0]["balance"] = 9
+        storage.save_data(valid, path)
+    finally:
+        timer.join()
+        reader.close()
+    assert balance_of(path) == 9
+
+
 def test_load_with_recovery_raises_when_restore_fails(path: Path) -> None:
     """If no backup works, the error carries both reasons."""
     path.parent.mkdir(parents=True)

@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import threading
+import time
 from collections.abc import Callable, Iterator
 from datetime import datetime, timedelta, timezone
 from functools import partial
@@ -24,6 +25,12 @@ SCHEMA_VERSION = 1
 MAX_BACKUPS = 20
 DEFAULT_DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "data.json"
 SECTIONS = ("users", "groups", "events", "bets", "polls")
+
+# On Windows, os.replace fails with PermissionError while another thread or process
+# (or a virus scanner) has the target open, so the replace is retried briefly there.
+RETRY_REPLACE = os.name == "nt"
+REPLACE_ATTEMPTS = 20
+REPLACE_DELAY_SECONDS = 0.05
 
 Data = dict[str, Any]
 PathArg = str | os.PathLike[str] | None
@@ -342,6 +349,19 @@ def _unique_path(directory: Path, prefix: str) -> Path:
         moment += timedelta(microseconds=1)
 
 
+def _replace(source: str | Path, target: Path) -> None:
+    """Call os.replace; on Windows retry for up to ~1 second while the target is busy."""
+    attempts = REPLACE_ATTEMPTS if RETRY_REPLACE else 1
+    for attempt in range(1, attempts + 1):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if attempt == attempts:
+                raise
+            time.sleep(REPLACE_DELAY_SECONDS)
+
+
 def _write_atomic(path: Path, payload: bytes) -> None:
     """Write bytes to a temp file next to ``path``, fsync, then os.replace onto ``path``.
 
@@ -354,7 +374,7 @@ def _write_atomic(path: Path, payload: bytes) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp_name, path)
+        _replace(temp_name, path)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
             os.remove(temp_name)
@@ -459,7 +479,7 @@ def _restore_move_main(file: Path) -> Path | None:
     if not file.exists():
         return None
     corrupt = _unique_path(file.parent, "data.corrupt-")
-    os.replace(file, corrupt)
+    _replace(file, corrupt)
     return corrupt
 
 
@@ -479,19 +499,36 @@ def _restore_locked(file: Path) -> tuple[Path, Path | None]:
         except OSError as error:
             if corrupt is not None:
                 with contextlib.suppress(OSError):
-                    os.replace(corrupt, file)
+                    _replace(corrupt, file)
             raise StorageError(f"cannot restore {backup.name}: {error}") from error
         return backup, corrupt
     detail = "; ".join(problems) if problems else "no backups found"
     raise StorageError(f"no valid backup to restore ({detail})")
 
 
-def _restore(path: PathArg) -> tuple[Path, Path | None]:
-    """Take the lock and restore the newest valid backup; refuse inside a transaction."""
+def _is_loadable(file: Path) -> bool:
+    """Return True if the file loads and validates (a missing file counts as loadable)."""
+    try:
+        load_data(file)
+    except StorageError:
+        return False
+    return True
+
+
+def _restore(path: PathArg, only_if_broken: bool = False) -> tuple[Path, Path | None] | None:
+    """Take the lock and restore the newest valid backup; refuse inside a transaction.
+
+    With only_if_broken, the main file is checked again once the lock is held. If it
+    loads now (another session restored or saved it meanwhile), nothing is restored and
+    None is returned, so a newer good file is never replaced by an older backup.
+    """
     if getattr(_STATE, "active", False):
         raise StorageError("cannot restore a backup inside a transaction")
+    file = _resolve_path(path)
     with _LOCK:
-        return _restore_locked(_resolve_path(path))
+        if only_if_broken and _is_loadable(file):
+            return None
+        return _restore_locked(file)
 
 
 def restore_latest_backup(path: PathArg = None) -> Path:
@@ -501,24 +538,31 @@ def restore_latest_backup(path: PathArg = None) -> Path:
     file (if any) is first moved to data.corrupt-<timestamp>.json next to it. With no
     valid backup, StorageError is raised and the main file stays where it is.
     """
-    return _restore(path)[0]
+    restored = _restore(path)
+    if restored is None:  # cannot happen: None only comes with only_if_broken
+        raise StorageError("restore returned no backup")
+    return restored[0]
 
 
 def load_with_recovery(path: PathArg = None) -> tuple[Data, str | None]:
     """Load the data for app start-up, restoring a backup if the file is broken.
 
     Returns (data, None) when nothing is wrong, or (data, warning) after a restore; the
-    warning names the backup used and where the broken file was moved. If the restore
-    fails too, StorageError carries both reasons.
+    warning names the backup used and where the broken file was moved. If another
+    session fixed the file in the meantime, nothing is restored and no warning is
+    returned. If the restore fails too, StorageError carries both reasons.
     """
     try:
         return load_data(path), None
     except StorageError as load_error:
         reason = str(load_error)
         try:
-            backup, corrupt = _restore(path)
+            restored = _restore(path, only_if_broken=True)
         except StorageError as restore_error:
             raise StorageError(f"{reason}; recovery failed: {restore_error}") from restore_error
+    if restored is None:
+        return load_data(path), None
+    backup, corrupt = restored
     warning = f"The data file was damaged ({reason}). Restored from backup {backup.name}."
     if corrupt is not None:
         warning += f" The broken file was moved to {corrupt}."
