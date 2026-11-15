@@ -53,14 +53,14 @@ def _is_string(value: Any, ids: dict[str, set[str]]) -> bool:
 
 
 def _is_iso_time(value: Any, ids: dict[str, set[str]]) -> bool:
-    """Return True for a string that parses as an ISO 8601 date or datetime."""
+    """Return True for an ISO 8601 datetime string with a timezone offset."""
     if not isinstance(value, str):
         return False
     try:
-        datetime.fromisoformat(value)
+        moment = datetime.fromisoformat(value)
     except ValueError:
         return False
-    return True
+    return moment.utcoffset() is not None
 
 
 def _is_int_min(minimum: int, value: Any, ids: dict[str, set[str]]) -> bool:
@@ -136,7 +136,7 @@ RULES: dict[str, dict[str, Rule]] = {
         "creator_id": (partial(_is_ref, "users"), "an existing user id"),
         "title": (_is_text, "a non-empty string"),
         "description": (_is_string, "a string"),
-        "close_time": (_is_iso_time, "an ISO 8601 date and time"),
+        "close_time": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
         "status": (
             partial(_is_choice, ("open", "paused", "closed", "resolved", "deleted")),
             "open, paused, closed, resolved or deleted",
@@ -156,7 +156,7 @@ RULES: dict[str, dict[str, Rule]] = {
         "id": (_is_text, "a non-empty string"),
         "event_id": (partial(_is_ref, "events"), "an existing event id"),
         "opened_by": (_is_opener, "'auto' or an existing user id"),
-        "closes_at": (_is_iso_time, "an ISO 8601 date and time"),
+        "closes_at": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
         "votes": (_is_votes, "a mapping of existing user ids to delete or keep"),
         "result": (_nullable(partial(_is_choice, ("deleted", "kept"))), "deleted, kept or null"),
     },
@@ -232,15 +232,22 @@ def _check_record(section: str, record: Data, index: int, ids: dict[str, set[str
             raise StorageError(f"{label}.{field} must be {description}, got {record[field]!r}")
 
 
+def _username_key(username: str) -> str:
+    """Return the form used to compare usernames: trimmed and case-folded."""
+    return username.strip().casefold()
+
+
 def _check_usernames(data: Data) -> None:
-    """Check that no two users share a username."""
-    seen: set[str] = set()
+    """Check that no two usernames match, ignoring case and surrounding spaces."""
+    seen: dict[str, str] = {}
     for user in data["users"]:
-        if user["username"] in seen:
+        key = _username_key(user["username"])
+        if key in seen:
             raise StorageError(
-                f"users[{user['id']}].username must be unique, got {user['username']!r}"
+                f"users[{user['id']}].username must be unique (ignoring case and spaces), "
+                f"got {user['username']!r}, which clashes with users[{seen[key]}]"
             )
-        seen.add(user["username"])
+        seen[key] = user["id"]
 
 
 def _check_outcome(event: Data) -> None:
@@ -271,12 +278,24 @@ def _check_payouts(event: Data, bets: list[Data]) -> None:
         )
 
 
+def _check_refunds(event: Data, bets: list[Data]) -> None:
+    """Check that every bet on a deleted event was refunded: payout equals stake."""
+    for bet in bets:
+        if bet["event_id"] == event["id"] and bet["payout"] != bet["stake"]:
+            raise StorageError(
+                f"bets[{bet['id']}].payout must equal the stake {bet['stake']} because "
+                f"events[{event['id']}] is deleted, got {bet['payout']!r}"
+            )
+
+
 def _check_events(data: Data) -> None:
-    """Run the outcome and payout checks for every event."""
+    """Run the outcome, payout and refund checks for every event."""
     for event in data["events"]:
         _check_outcome(event)
         if event["status"] == "resolved":
             _check_payouts(event, data["bets"])
+        elif event["status"] == "deleted":
+            _check_refunds(event, data["bets"])
 
 
 def validate(data: Any) -> None:

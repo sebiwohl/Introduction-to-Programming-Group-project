@@ -30,13 +30,13 @@ def build_valid_data() -> dict[str, Any]:
     ]
     data["events"] = [
         {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Anna is late",
-         "description": "", "close_time": "2026-11-20T19:00", "status": "open",
+         "description": "", "close_time": "2026-11-20T19:00:00+00:00", "status": "open",
          "outcome": None, "flags": []},
         {"id": "e2", "group_id": "g1", "creator_id": "u2", "title": "It rains",
-         "description": "On Saturday", "close_time": "2026-11-10T12:00",
+         "description": "On Saturday", "close_time": "2026-11-10T12:00:00+00:00",
          "status": "resolved", "outcome": "yes", "flags": ["u3"]},
         {"id": "e3", "group_id": "g1", "creator_id": "u2", "title": "Fishy event",
-         "description": "", "close_time": "2026-11-25T12:00", "status": "paused",
+         "description": "", "close_time": "2026-11-25T12:00:00+00:00", "status": "paused",
          "outcome": None, "flags": ["u1", "u2"]},
     ]
     data["bets"] = [
@@ -53,7 +53,7 @@ def build_valid_data() -> dict[str, Any]:
     ]
     data["polls"] = [
         {"id": "p1", "event_id": "e3", "opened_by": "auto",
-         "closes_at": "2026-11-16T12:00", "votes": {"u1": "delete", "u2": "keep"},
+         "closes_at": "2026-11-16T12:00:00+00:00", "votes": {"u1": "delete", "u2": "keep"},
          "result": None},
     ]
     return data
@@ -168,12 +168,56 @@ def test_resolved_event_without_bets_is_valid(valid: dict[str, Any]) -> None:
     storage.validate(valid)
 
 
-def test_deleted_event_payouts_are_not_checked(valid: dict[str, Any]) -> None:
-    """Refund bookkeeping on deleted events is not validated."""
+def delete_event_with_bet(data: dict[str, Any], payout: Any) -> None:
+    """Mark e3 deleted and give it one bet of stake 7 with the given payout."""
+    find(data, "events", "e3")["status"] = "deleted"
+    data["bets"].append({"id": "b9", "event_id": "e3", "user_id": "u1", "side": "yes",
+                         "stake": 7, "payout": payout})
+
+
+def test_deleted_event_with_full_refunds_is_saved(path: Path, valid: dict[str, Any]) -> None:
+    """A deleted event whose bets are all paid back their stake is accepted."""
+    delete_event_with_bet(valid, 7)
+    storage.save_data(valid, path)
+    assert storage.load_data(path) == valid
+
+
+def test_deleted_event_without_bets_is_saved(path: Path, valid: dict[str, Any]) -> None:
+    """A deleted event with no bets has nothing to refund."""
     find(valid, "events", "e3")["status"] = "deleted"
-    valid["bets"].append({"id": "b9", "event_id": "e3", "user_id": "u1", "side": "yes",
-                          "stake": 7, "payout": None})
-    storage.validate(valid)
+    storage.save_data(valid, path)
+    assert storage.load_data(path) == valid
+
+
+def test_username_is_stored_as_given(path: Path, valid: dict[str, Any]) -> None:
+    """Spaces and case in a username are kept exactly when saved."""
+    find(valid, "users", "u3")["username"] = "  Carl Big "
+    storage.save_data(valid, path)
+    assert find(storage.load_data(path), "users", "u3")["username"] == "  Carl Big "
+
+
+def test_usernames_that_differ_after_trimming_are_saved(
+    path: Path, valid: dict[str, Any]
+) -> None:
+    """'anna' and 'anna2' are different names and are both accepted."""
+    find(valid, "users", "u2")["username"] = " Anna2"
+    storage.save_data(valid, path)
+    assert storage.load_data(path) == valid
+
+
+@pytest.mark.parametrize("moment", [
+    "2026-11-20T18:00:00+00:00",
+    "2026-11-20T19:00:00+01:00",
+    "2026-11-20T12:30:00-05:30",
+    "2026-11-20T18:00:00.250000+00:00",
+    "2026-11-20T18:00:00Z",
+])
+def test_times_with_offset_are_saved(path: Path, valid: dict[str, Any], moment: str) -> None:
+    """close_time and closes_at with a timezone offset are accepted."""
+    find(valid, "events", "e1")["close_time"] = moment
+    find(valid, "polls", "p1")["closes_at"] = moment
+    storage.save_data(valid, path)
+    assert storage.load_data(path) == valid
 
 
 def test_error_message_names_section_id_and_field(valid: dict[str, Any]) -> None:
@@ -219,6 +263,21 @@ def missing_payout(data: dict[str, Any]) -> None:
     find(data, "bets", "b5")["payout"] = None
 
 
+def refund_missing(data: dict[str, Any]) -> None:
+    """Delete an event but leave a bet on it without a payout."""
+    delete_event_with_bet(data, None)
+
+
+def refund_too_small(data: dict[str, Any]) -> None:
+    """Delete an event but refund less than the stake."""
+    delete_event_with_bet(data, 6)
+
+
+def refund_too_large(data: dict[str, Any]) -> None:
+    """Delete an event but refund more than the stake."""
+    delete_event_with_bet(data, 8)
+
+
 def duplicate_flag(data: dict[str, Any]) -> None:
     """Let the same user flag an event twice."""
     find(data, "events", "e3")["flags"] = ["u1", "u1"]
@@ -243,6 +302,15 @@ INVALID_CHANGES = {
     "duplicate flag": duplicate_flag,
     "duplicate id": duplicate_id,
     "duplicate username": set_field("users", "u2", "username", "anna"),
+    "username clash by case": set_field("users", "u2", "username", "ANNA"),
+    "username clash by spaces": set_field("users", "u2", "username", " anna "),
+    "username clash by case and spaces": set_field("users", "u2", "username", " Anna"),
+    "deleted event bet without refund": refund_missing,
+    "deleted event refund below stake": refund_too_small,
+    "deleted event refund above stake": refund_too_large,
+    "close_time without offset": set_field("events", "e1", "close_time", "2026-11-20T19:00"),
+    "close_time date only": set_field("events", "e1", "close_time", "2026-11-20"),
+    "closes_at without offset": set_field("polls", "p1", "closes_at", "2026-11-16T12:00:00"),
     "empty username": set_field("users", "u2", "username", "  "),
     "empty password hash": set_field("users", "u2", "password_hash", ""),
     "unknown extra field": add_extra_field,
