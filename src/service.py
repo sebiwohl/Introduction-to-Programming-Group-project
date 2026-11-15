@@ -7,7 +7,8 @@ together. Read-only functions use storage.load_data().
 All rule violations raise BettingError with a message the UI can show.
 Times passed in (`now`, `close_time`) must be timezone-aware.
 
-Not here yet: accounts and login (auth.py), moderation (flags and polls).
+Permissions come from auth.require_permission(). Accounts and groups live in
+auth.py. Not here yet: moderation (flags and polls).
 """
 
 import uuid
@@ -16,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from src import betting, storage
+from src import auth, betting, storage
 from src.betting import BettingError
 from src.convert import (
     bet_from_dict,
@@ -31,7 +32,6 @@ from src.convert import (
     user_to_dict,
 )
 from src.models import (
-    ROLE_ADMIN,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
@@ -148,17 +148,6 @@ def _get_event_for(state: _State, user: User, event_id: str) -> Event:
     return event
 
 
-def _require_can_resolve(user: User, event: Event) -> None:
-    """Allow the event's creator, or an admin of its group (requirements 2.1).
-
-    TODO: move into the shared permission check in auth.py once it exists.
-    """
-    is_creator = user.id == event.creator_id
-    is_admin = user.role == ROLE_ADMIN and betting.can_access_event(user, event)
-    if not (is_creator or is_admin):
-        raise BettingError("Only the creator or the group admin can resolve this event.")
-
-
 def _clean_text(text: str, name: str, max_length: int, required: bool) -> str:
     """Return text with surrounding spaces removed, or raise BettingError."""
     if not isinstance(text, str):
@@ -249,8 +238,7 @@ def create_event(
     with storage.transaction(path) as data:
         state = _unpack(data)
         user = _get_user(state, user_id)
-        if not user.group_id:
-            raise BettingError("Join or create a group before creating events.")
+        auth.require_permission(user, auth.CREATE_EVENT)
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
             title=title, description=description, close_time=close_time,
@@ -304,6 +292,7 @@ def place_bet(
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
+        auth.require_permission(user, auth.PLACE_BET, event)
         bet = betting.place_bet(user, event, side, stake, now)
         state.bets.append(bet)
         _pack(state, data)
@@ -324,7 +313,7 @@ def resolve_event(
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
-        _require_can_resolve(user, event)
+        auth.require_permission(user, auth.RESOLVE_EVENT, event)
         total = betting.resolve_event(
             event, _bets_on(state, event.id), outcome, state.users, now
         )
