@@ -184,7 +184,7 @@ Pool, stake per side, odds and the leaderboard are calculated from the bets and 
 ```json
 {
   "event": {"id": "e7", "title": "Anna is late to dinner", "status": "open",
-            "close_time": "2026-11-20T19:00", "outcome": null, "flags": []},
+            "close_time": "2026-11-20T19:00:00+00:00", "outcome": null, "flags": []},
   "bets": [
     {"user_id": "u1", "side": "yes", "stake": 10},
     {"user_id": "u2", "side": "yes", "stake": 10},
