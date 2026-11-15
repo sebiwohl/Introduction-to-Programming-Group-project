@@ -1,0 +1,369 @@
+"""Service layer: what the UI calls. Connects storage, conversion and betting.
+
+Every change runs as "load fresh data, check, change, save" inside one
+storage.transaction(), so a user's balance and their bet are always saved
+together. Read-only functions use storage.load_data().
+
+All rule violations raise BettingError with a message the UI can show.
+Times passed in (`now`, `close_time`) must be timezone-aware.
+
+Not here yet: accounts and login (auth.py), moderation (flags and polls).
+"""
+
+import uuid
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from typing import Dict, List, Optional
+
+from src import betting, storage
+from src.betting import BettingError
+from src.convert import (
+    bet_from_dict,
+    bet_to_dict,
+    event_from_dict,
+    event_to_dict,
+    group_from_dict,
+    group_to_dict,
+    poll_from_dict,
+    poll_to_dict,
+    user_from_dict,
+    user_to_dict,
+)
+from src.models import (
+    ROLE_ADMIN,
+    SIDE_NO,
+    SIDE_YES,
+    STATUS_CLOSED,
+    STATUS_DELETED,
+    STATUS_OPEN,
+    Bet,
+    Event,
+    Group,
+    Poll,
+    User,
+)
+
+MAX_TITLE_LENGTH = 120
+MAX_DESCRIPTION_LENGTH = 500
+
+
+# --- results returned to the UI ---------------------------------------------
+
+@dataclass
+class EventSummary:
+    """An event with the numbers the feed shows."""
+
+    event: Event
+    pool: Decimal
+    stake_yes: Decimal
+    stake_no: Decimal
+    odds_yes: Optional[float]
+    odds_no: Optional[float]
+    my_stake: Decimal
+
+
+@dataclass
+class BetRecord:
+    """One past or open bet of a user, with its event's title and result."""
+
+    bet: Bet
+    event_title: str
+    event_status: str
+    outcome: Optional[str]
+
+
+@dataclass
+class LeaderboardRow:
+    """One member's place on the leaderboard."""
+
+    rank: int
+    username: str
+    balance: Decimal
+
+
+# --- loading and saving -------------------------------------------------------
+
+@dataclass
+class _State:
+    """All records as dataclasses, keyed by id where lookups are needed."""
+
+    users: Dict[str, User]
+    groups: Dict[str, Group]
+    events: Dict[str, Event]
+    bets: List[Bet]
+    polls: List[Poll]
+
+
+def _unpack(data: dict) -> _State:
+    """Convert the stored dicts into dataclasses."""
+    return _State(
+        users={u["id"]: user_from_dict(u) for u in data["users"]},
+        groups={g["id"]: group_from_dict(g) for g in data["groups"]},
+        events={e["id"]: event_from_dict(e) for e in data["events"]},
+        bets=[bet_from_dict(b) for b in data["bets"]],
+        polls=[poll_from_dict(p) for p in data["polls"]],
+    )
+
+
+def _pack(state: _State, data: dict) -> None:
+    """Write the dataclasses back into the stored dicts (in place)."""
+    data["users"] = [user_to_dict(u) for u in state.users.values()]
+    data["groups"] = [group_to_dict(g) for g in state.groups.values()]
+    data["events"] = [event_to_dict(e) for e in state.events.values()]
+    data["bets"] = [bet_to_dict(b) for b in state.bets]
+    data["polls"] = [poll_to_dict(p) for p in state.polls]
+
+
+def _load(path) -> _State:
+    """Load the data read-only and convert it."""
+    return _unpack(storage.load_data(path))
+
+
+# --- checks -------------------------------------------------------------------
+
+def _require_aware(moment: datetime, name: str) -> None:
+    """Raise BettingError unless `moment` is a timezone-aware datetime."""
+    if not isinstance(moment, datetime) or moment.utcoffset() is None:
+        raise BettingError(f"{name} must be a timezone-aware date and time.")
+
+
+def _get_user(state: _State, user_id: str) -> User:
+    """Return the user, or raise BettingError if they do not exist."""
+    user = state.users.get(user_id)
+    if user is None:
+        raise BettingError("Unknown user.")
+    return user
+
+
+def _get_event_for(state: _State, user: User, event_id: str) -> Event:
+    """Return the event if it exists and is in one of the user's groups.
+
+    A missing event and another group's event give the same message, so users
+    cannot find out which ids exist in other groups.
+    """
+    event = state.events.get(event_id)
+    if event is None or not betting.can_access_event(user, event):
+        raise BettingError("Event not found.")
+    return event
+
+
+def _require_can_resolve(user: User, event: Event) -> None:
+    """Allow the event's creator, or an admin of its group (requirements 2.1).
+
+    TODO: move into the shared permission check in auth.py once it exists.
+    """
+    is_creator = user.id == event.creator_id
+    is_admin = user.role == ROLE_ADMIN and betting.can_access_event(user, event)
+    if not (is_creator or is_admin):
+        raise BettingError("Only the creator or the group admin can resolve this event.")
+
+
+def _clean_text(text: str, name: str, max_length: int, required: bool) -> str:
+    """Return text with surrounding spaces removed, or raise BettingError."""
+    if not isinstance(text, str):
+        raise BettingError(f"{name} must be text.")
+    text = text.strip()
+    if required and not text:
+        raise BettingError(f"{name} cannot be empty.")
+    if len(text) > max_length:
+        raise BettingError(f"{name} can be at most {max_length} characters.")
+    return text
+
+
+def _bets_on(state: _State, event_id: str) -> List[Bet]:
+    """Return all bets on one event."""
+    return [bet for bet in state.bets if bet.event_id == event_id]
+
+
+def _close_expired(state: _State, now: datetime) -> int:
+    """Mark open events past their close time as closed; return how many."""
+    closed = 0
+    for event in state.events.values():
+        if event.status == STATUS_OPEN and now >= event.close_time:
+            event.status = STATUS_CLOSED
+            closed += 1
+    return closed
+
+
+def _summarize(state: _State, event: Event, user: User) -> EventSummary:
+    """Return the feed numbers for one event."""
+    bets = _bets_on(state, event.id)
+    stakes = betting.stake_per_side(bets)
+    my_stake = sum((b.stake for b in bets if b.user_id == user.id), Decimal("0"))
+    return EventSummary(
+        event=event,
+        pool=betting.pool(bets),
+        stake_yes=stakes[SIDE_YES],
+        stake_no=stakes[SIDE_NO],
+        odds_yes=betting.odds(bets, SIDE_YES),
+        odds_no=betting.odds(bets, SIDE_NO),
+        my_stake=my_stake,
+    )
+
+
+# --- public functions -------------------------------------------------------
+
+def refresh(now: datetime, path=None) -> int:
+    """Close every open event past its close time; return how many were closed.
+
+    Call when a page opens. Saves only if something changed, so viewing pages
+    does not create a new backup each time.
+    """
+    _require_aware(now, "now")
+    if _close_expired(_load(path), now) == 0:
+        return 0
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        closed = _close_expired(state, now)
+        _pack(state, data)
+    return closed
+
+
+def get_user(user_id: str, path=None) -> User:
+    """Return a user, for example to show their balance."""
+    return _get_user(_load(path), user_id)
+
+
+def create_event(
+    user_id: str,
+    title: str,
+    close_time: datetime,
+    now: datetime,
+    description: str = "",
+    path=None,
+) -> Event:
+    """Create a yes/no event in the user's group and return it.
+
+    The title is required, both texts are trimmed and length-limited, and the
+    close time must be in the future.
+    """
+    _require_aware(now, "now")
+    _require_aware(close_time, "Close time")
+    title = _clean_text(title, "Title", MAX_TITLE_LENGTH, required=True)
+    description = _clean_text(
+        description, "Description", MAX_DESCRIPTION_LENGTH, required=False
+    )
+    if close_time <= now:
+        raise BettingError("Close time must be in the future.")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        user = _get_user(state, user_id)
+        if not user.group_id:
+            raise BettingError("Join or create a group before creating events.")
+        event = Event(
+            id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
+            title=title, description=description, close_time=close_time,
+        )
+        state.events[event.id] = event
+        _pack(state, data)
+    return event
+
+
+def feed(user_id: str, now: datetime, path=None) -> List[EventSummary]:
+    """Return the events in the user's groups with pool and odds.
+
+    Deleted events are hidden. Open events come first, soonest close time
+    first, then the rest with the newest close time first.
+    """
+    refresh(now, path)
+    state = _load(path)
+    user = _get_user(state, user_id)
+    events = [
+        e for e in betting.visible_events(user, list(state.events.values()))
+        if e.status != STATUS_DELETED
+    ]
+    open_events = sorted(
+        (e for e in events if e.status == STATUS_OPEN), key=lambda e: e.close_time
+    )
+    other_events = sorted(
+        (e for e in events if e.status != STATUS_OPEN),
+        key=lambda e: e.close_time, reverse=True,
+    )
+    return [_summarize(state, e, user) for e in open_events + other_events]
+
+
+def event_details(user_id: str, event_id: str, now: datetime, path=None) -> EventSummary:
+    """Return one event with its numbers, if the user may see it."""
+    refresh(now, path)
+    state = _load(path)
+    user = _get_user(state, user_id)
+    event = _get_event_for(state, user, event_id)
+    if event.status == STATUS_DELETED:
+        raise BettingError("Event not found.")
+    return _summarize(state, event, user)
+
+
+def place_bet(
+    user_id: str, event_id: str, side: str, stake: Decimal, now: datetime, path=None
+) -> Bet:
+    """Place a bet and save the new balance and the bet together; return the bet."""
+    _require_aware(now, "now")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        _close_expired(state, now)
+        user = _get_user(state, user_id)
+        event = _get_event_for(state, user, event_id)
+        bet = betting.place_bet(user, event, side, stake, now)
+        state.bets.append(bet)
+        _pack(state, data)
+    return bet
+
+
+def resolve_event(
+    user_id: str, event_id: str, outcome: str, now: datetime, path=None
+) -> Decimal:
+    """Set the outcome, pay out and save everything together; return total paid.
+
+    Only the event's creator or the group admin may resolve, and only at or
+    after the close time.
+    """
+    _require_aware(now, "now")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        _close_expired(state, now)
+        user = _get_user(state, user_id)
+        event = _get_event_for(state, user, event_id)
+        _require_can_resolve(user, event)
+        total = betting.resolve_event(
+            event, _bets_on(state, event.id), outcome, state.users, now
+        )
+        _pack(state, data)
+    return total
+
+
+def bet_history(user_id: str, path=None) -> List[BetRecord]:
+    """Return the user's bets with each event's title and result, newest event first."""
+    state = _load(path)
+    user = _get_user(state, user_id)
+    records = []
+    for bet in state.bets:
+        if bet.user_id != user.id:
+            continue
+        event = state.events[bet.event_id]
+        records.append(BetRecord(
+            bet=bet, event_title=event.title,
+            event_status=event.status, outcome=event.outcome,
+        ))
+    records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
+    return records
+
+
+def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
+    """Return the members of the user's group ranked by balance (highest first).
+
+    Members with the same balance share a rank and are listed by username.
+    """
+    state = _load(path)
+    user = _get_user(state, user_id)
+    if not user.group_id:
+        return []
+    members = [u for u in state.users.values() if u.group_id == user.group_id]
+    members.sort(key=lambda u: (-u.balance, u.username.casefold()))
+    rows, rank, previous = [], 0, None
+    for position, member in enumerate(members, start=1):
+        if member.balance != previous:
+            rank, previous = position, member.balance
+        rows.append(LeaderboardRow(rank=rank, username=member.username,
+                                   balance=member.balance))
+    return rows
