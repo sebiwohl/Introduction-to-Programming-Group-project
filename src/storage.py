@@ -1,11 +1,18 @@
-"""Storage module: the only place that reads or writes the data files.
+"""Storage module: the only place that reads or writes the stored data.
 
-Data lives in one JSON file (``data/data.json`` by default). Every save is
-validated first, written to a temporary file and moved into place atomically.
-The previous version is kept as a backup (the newest ``MAX_BACKUPS`` are
-kept), so a damaged file can be restored at start-up.
+Two places can hold the data, with the same format and the same rules:
 
-Standard library only, no Streamlit.
+* A JSON file (``data/data.json`` by default). Every save is validated first,
+  written to a temporary file and moved into place atomically. The previous
+  version is kept as a backup (the newest ``MAX_BACKUPS`` are kept), so a
+  damaged file can be restored at start-up.
+* A PostgreSQL database such as Supabase, used when the ``DATABASE_URL``
+  environment variable is set and no file path is passed. The whole data dict
+  is one JSON row in ``app_data``; backups are rows in ``app_data_backups``.
+  Needed on hosts that erase local files on restart (Streamlit Community Cloud).
+
+An explicit ``path`` argument always means the file, so tests never touch the
+database by accident. No Streamlit; psycopg is imported only in database mode.
 """
 
 import contextlib
@@ -36,8 +43,12 @@ Data = dict[str, Any]
 PathArg = str | os.PathLike[str] | None
 Predicate = Callable[[Any, dict[str, set[str]]], bool]
 
+DATABASE_URL_ENV = "DATABASE_URL"
+DB_CONNECT_TIMEOUT_SECONDS = 10
+
 _LOCK = threading.Lock()
 _STATE = threading.local()
+_READY_DATABASES: set[str] = set()
 
 
 class StorageError(Exception):
@@ -403,15 +414,247 @@ def _prune_backups(path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Database (PostgreSQL / Supabase): one row holds the whole data dict as JSON
+# ---------------------------------------------------------------------------
+
+_CREATE_TABLES = """
+CREATE TABLE IF NOT EXISTS app_data (
+    id integer PRIMARY KEY CHECK (id = 1),
+    data jsonb NOT NULL,
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS app_data_backups (
+    id bigserial PRIMARY KEY,
+    saved_at timestamptz NOT NULL DEFAULT now(),
+    kind text NOT NULL CHECK (kind IN ('backup', 'corrupt')),
+    data jsonb NOT NULL
+);
+ALTER TABLE app_data ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_data_backups ENABLE ROW LEVEL SECURITY;
+"""
+# Row level security with no policies blocks Supabase's public web API from these
+# tables (they hold password hashes). Our own connection is the table owner, so it
+# is not affected.
+
+
+class _SecretUrl(str):
+    """A database URL that never shows itself in tracebacks or logs.
+
+    It works like a normal string, but repr() hides it, so the password inside the
+    URL is not printed when an error report lists function arguments (pytest does).
+    """
+
+    def __repr__(self) -> str:
+        """Return a placeholder instead of the URL."""
+        return "'<database url hidden>'"
+
+
+def _database_url(path: PathArg) -> str | None:
+    """Return the database URL to use, or None to use the file.
+
+    A path argument always means the file. Otherwise $DATABASE_URL, if set and not
+    empty, selects the database. The URL is wrapped so it is never printed.
+    """
+    if path is not None:
+        return None
+    value = os.environ.get(DATABASE_URL_ENV)
+    return _SecretUrl(value) if value else None
+
+
+def _psycopg() -> Any:
+    """Import and return psycopg, or raise StorageError if it is not installed."""
+    try:
+        import psycopg
+    except ImportError as error:
+        raise StorageError(
+            f"{DATABASE_URL_ENV} is set but psycopg is not installed"
+        ) from error
+    return psycopg
+
+
+def _connect(psycopg: Any, url: str) -> Any:
+    """Open a connection; prepared statements are off so Supabase poolers work."""
+    return psycopg.connect(
+        url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS, prepare_threshold=None
+    )
+
+
+def _database_error(error: Exception) -> StorageError:
+    """Wrap a psycopg error in a StorageError (psycopg never shows the password)."""
+    return StorageError(f"database error ({type(error).__name__}): {error}".strip())
+
+
+def _ensure_tables(psycopg: Any, url: str) -> None:
+    """Create the tables once per process, in their own committed transaction."""
+    if url in _READY_DATABASES:
+        return
+    with _connect(psycopg, url) as conn:
+        conn.execute(_CREATE_TABLES)
+    _READY_DATABASES.add(url)
+
+
+@contextlib.contextmanager
+def _db_cursor(url: str) -> Iterator[Any]:
+    """Yield a cursor inside one database transaction.
+
+    The transaction commits when the block ends and rolls back if it raises.
+    Database errors become StorageError; other errors pass through unchanged.
+    """
+    psycopg = _psycopg()
+    try:
+        _ensure_tables(psycopg, url)
+        with _connect(psycopg, url) as conn, conn.cursor() as cur:
+            yield cur
+    except psycopg.Error as error:
+        raise _database_error(error) from error
+
+
+def _db_read(cur: Any, lock: bool = False) -> Any:
+    """Return the stored data (not yet validated), or None if nothing is saved yet."""
+    suffix = " FOR UPDATE" if lock else ""
+    cur.execute("SELECT data FROM app_data WHERE id = 1" + suffix)
+    row = cur.fetchone()
+    return None if row is None else row[0]
+
+
+def _db_validated(data: Any) -> Data:
+    """Validate data read from the database; None (nothing saved) gives empty_data()."""
+    if data is None:
+        return empty_data()
+    try:
+        validate(data)
+    except StorageError as error:
+        raise StorageError(f"the stored data is invalid: {error}") from error
+    return data
+
+
+def _db_add_backup(cur: Any, data: Any, kind: str) -> int:
+    """Store a copy of data as a backup row; return the new row id."""
+    from psycopg.types.json import Jsonb
+
+    cur.execute(
+        "INSERT INTO app_data_backups (kind, data) VALUES (%s, %s) RETURNING id",
+        (kind, Jsonb(data)),
+    )
+    return cur.fetchone()[0]
+
+
+def _db_write(cur: Any, data: Data) -> None:
+    """Insert or replace the data row."""
+    from psycopg.types.json import Jsonb
+
+    cur.execute(
+        "INSERT INTO app_data (id, data, updated_at) VALUES (1, %s, now()) "
+        "ON CONFLICT (id) DO UPDATE SET data = EXCLUDED.data, updated_at = now()",
+        (Jsonb(data),),
+    )
+
+
+def _db_prune(cur: Any) -> None:
+    """Keep only the newest MAX_BACKUPS rows of each backup kind."""
+    for kind in ("backup", "corrupt"):
+        cur.execute(
+            "DELETE FROM app_data_backups WHERE kind = %s AND id NOT IN ("
+            "SELECT id FROM app_data_backups WHERE kind = %s "
+            "ORDER BY id DESC LIMIT %s)",
+            (kind, kind, MAX_BACKUPS),
+        )
+
+
+def _db_save(cur: Any, data: Data, previous: Any) -> None:
+    """Back up the previous data (if any), write the new data, prune old backups."""
+    if previous is not None:
+        _db_add_backup(cur, previous, "backup")
+    _db_write(cur, data)
+    _db_prune(cur)
+
+
+def _backup_name(row_id: int, saved_at: datetime) -> str:
+    """Return a readable backup name like 'backup-42-2026-11-16T13:22:55Z'."""
+    moment = saved_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return f"backup-{row_id}-{moment}"
+
+
+def _db_list_backups(url: str) -> list[str]:
+    """Return the names of the database backups, newest first."""
+    with _db_cursor(url) as cur:
+        cur.execute(
+            "SELECT id, saved_at FROM app_data_backups WHERE kind = 'backup' "
+            "ORDER BY id DESC"
+        )
+        return [_backup_name(row_id, saved_at) for row_id, saved_at in cur.fetchall()]
+
+
+def _is_valid_stored(data: Any) -> bool:
+    """Return True if stored data is missing (nothing saved) or validates."""
+    try:
+        _db_validated(data)
+    except StorageError:
+        return False
+    return True
+
+
+def _db_restore(url: str, only_if_broken: bool) -> tuple[str, str | None] | None:
+    """Restore the newest valid database backup (lock must be held).
+
+    The broken data is kept as a 'corrupt' row. With only_if_broken, nothing is
+    restored if the data loads now. Returns (backup name, corrupt name) or None.
+    """
+    with _db_cursor(url) as cur:
+        current = _db_read(cur, lock=True)
+        if only_if_broken and _is_valid_stored(current):
+            return None
+        cur.execute(
+            "SELECT id, saved_at, data FROM app_data_backups WHERE kind = 'backup' "
+            "ORDER BY id DESC"
+        )
+        problems: list[str] = []
+        for row_id, saved_at, data in cur.fetchall():
+            name = _backup_name(row_id, saved_at)
+            try:
+                validate(data)
+            except StorageError as error:
+                problems.append(f"{name}: {error}")
+                continue
+            corrupt = None
+            if current is not None:
+                corrupt = f"corrupt row {_db_add_backup(cur, current, 'corrupt')}"
+            _db_write(cur, data)
+            return name, corrupt
+    detail = "; ".join(problems) if problems else "no backups found"
+    raise StorageError(f"no valid backup to restore ({detail})")
+
+
+@contextlib.contextmanager
+def _db_transaction(url: str) -> Iterator[Data]:
+    """Database version of transaction(): lock the row, yield the data, save it.
+
+    SELECT ... FOR UPDATE makes other app processes wait, so two users saving at the
+    same time cannot overwrite each other. If the block raises, everything rolls back.
+    """
+    with _db_cursor(url) as cur:
+        previous = _db_read(cur, lock=True)
+        data = _db_validated(previous)
+        yield data
+        validate(data)
+        _db_save(cur, data, previous)
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
 def load_data(path: PathArg = None) -> Data:
-    """Load and validate the data file.
+    """Load and validate the data file (or the database row, see the module docstring).
 
-    A missing file returns empty_data() and creates nothing. Unreadable files, invalid
-    JSON, a wrong schema_version or failed validation raise StorageError.
+    A missing file or empty database returns empty_data() and creates nothing.
+    Unreadable files, invalid JSON, a wrong schema_version, failed validation or a
+    database error raise StorageError.
     """
+    url = _database_url(path)
+    if url is not None:
+        with _db_cursor(url) as cur:
+            return _db_validated(_db_read(cur))
     file = _resolve_path(path)
     if not file.exists():
         return empty_data()
@@ -436,6 +679,11 @@ def save_data(data: Data, path: PathArg = None) -> None:
     main file, then prune old backups. The temp file is removed on any error.
     """
     validate(data)
+    url = _database_url(path)
+    if url is not None:
+        with _db_cursor(url) as cur:
+            _db_save(cur, data, _db_read(cur, lock=True))
+        return
     file = _resolve_path(path)
     payload = json.dumps(data, indent=2, ensure_ascii=False).encode("utf-8")
     if file.exists():
@@ -452,22 +700,31 @@ def transaction(path: PathArg = None) -> Iterator[Data]:
     polls when a page opens. Read-only pages may call load_data directly: the atomic
     replace means they always read a complete file. If the block raises, nothing is
     saved and the error is re-raised. A nested transaction in the same thread raises
-    StorageError instead of deadlocking. The lock covers threads of one process only.
+    StorageError instead of deadlocking. For the file, the lock covers threads of one
+    process only; in the database, a row lock also makes other processes wait.
     """
     if getattr(_STATE, "active", False):
         raise StorageError("nested transaction in the same thread is not allowed")
+    url = _database_url(path)
     with _LOCK:
         _STATE.active = True
         try:
-            data = load_data(path)
-            yield data
-            save_data(data, path)
+            if url is not None:
+                with _db_transaction(url) as data:
+                    yield data
+            else:
+                data = load_data(path)
+                yield data
+                save_data(data, path)
         finally:
             _STATE.active = False
 
 
-def list_backups(path: PathArg = None) -> list[Path]:
-    """Return the backup files of the data file, newest first."""
+def list_backups(path: PathArg = None) -> list[Path] | list[str]:
+    """Return the backups, newest first: file paths, or backup names in the database."""
+    url = _database_url(path)
+    if url is not None:
+        return _db_list_backups(url)
     directory = _backup_dir(_resolve_path(path))
     if not directory.is_dir():
         return []
@@ -515,15 +772,22 @@ def _is_loadable(file: Path) -> bool:
     return True
 
 
-def _restore(path: PathArg, only_if_broken: bool = False) -> tuple[Path, Path | None] | None:
+def _restore(
+    path: PathArg, only_if_broken: bool = False
+) -> tuple[Path | str, Path | str | None] | None:
     """Take the lock and restore the newest valid backup; refuse inside a transaction.
 
     With only_if_broken, the main file is checked again once the lock is held. If it
     loads now (another session restored or saved it meanwhile), nothing is restored and
     None is returned, so a newer good file is never replaced by an older backup.
+    In the database, backups and the broken copy are named by their row instead.
     """
     if getattr(_STATE, "active", False):
         raise StorageError("cannot restore a backup inside a transaction")
+    url = _database_url(path)
+    if url is not None:
+        with _LOCK:
+            return _db_restore(url, only_if_broken)
     file = _resolve_path(path)
     with _LOCK:
         if only_if_broken and _is_loadable(file):
@@ -531,8 +795,10 @@ def _restore(path: PathArg, only_if_broken: bool = False) -> tuple[Path, Path | 
         return _restore_locked(file)
 
 
-def restore_latest_backup(path: PathArg = None) -> Path:
+def restore_latest_backup(path: PathArg = None) -> Path | str:
     """Restore the newest backup that loads and validates; return that backup's path.
+
+    In the database, the backup's name is returned instead of a path.
 
     Runs under the lock, so it must not be called inside a transaction. The broken main
     file (if any) is first moved to data.corrupt-<timestamp>.json next to it. With no
@@ -563,6 +829,11 @@ def load_with_recovery(path: PathArg = None) -> tuple[Data, str | None]:
     if restored is None:
         return load_data(path), None
     backup, corrupt = restored
+    if isinstance(backup, str):
+        warning = f"The stored data was damaged ({reason}). Restored from {backup}."
+        if corrupt is not None:
+            warning += f" The broken data was kept as {corrupt}."
+        return load_data(path), warning
     warning = f"The data file was damaged ({reason}). Restored from backup {backup.name}."
     if corrupt is not None:
         warning += f" The broken file was moved to {corrupt}."
