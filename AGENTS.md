@@ -11,14 +11,14 @@ The app must be deployed at a public URL and shown live in the demo, so it is a 
 
 ## Stack
 - Python 3.12 with Streamlit (the course default stack). Do not switch stack or mix in another one without asking.
-- Storage: JSON files, all access in `src/storage.py` only (see Data). The storage choice may change to SQLite or a hosted database, so no other module may read or write files.
+- Storage: all access in `src/storage.py` only (see Data). Deployed, the data is one JSON row in Supabase (PostgreSQL, via `psycopg`), selected by the `DATABASE_URL` environment variable; locally and in tests it is the JSON file `data/data.json`. No other module may read or write data. `app.py` should copy `st.secrets["DATABASE_URL"]` into `os.environ` at start-up if it is not already set, because `storage.py` must not import Streamlit.
 - Tests: `pytest`.
 - Add a new dependency only after asking. Pin every version in `requirements.txt`, and keep dependencies minimal.
 
 ## Commands
 - Install: `pip install -r requirements.txt`
 - Run locally: `streamlit run app.py`
-- Test: `pytest`
+- Test: `pytest` (database tests are skipped unless `TEST_DATABASE_URL` points to an empty test database)
 - Reset demo data: `python scripts/seed.py` (rebuilds the same example group, users and events). Never run it against the deployed data without asking.
 
 Update this section if any command changes.
@@ -92,7 +92,8 @@ Business logic must not import Streamlit, so it can be tested without the UI.
 - Read every change you accept. Do not claim something works without running it.
 
 ## Deployment and demo
-- Deploy early and from `main`. Decide the host and record it here. Only committed files and `requirements.txt` reach the host, so check the app runs from a fresh clone.
+- Host: Streamlit Community Cloud, with the data in a Supabase (PostgreSQL) database. A hosting test showed Streamlit Cloud erases local files on reboot, so the deployed app must have the `DATABASE_URL` secret set (Supabase session pooler string, in the app's Settings > Secrets). Without it, `storage.py` falls back to `data/data.json`, which is fine locally only. A free Supabase project pauses after a week without activity: open the app before the demo.
+- Deploy early and from `main`. Only committed files and `requirements.txt` reach the host, so check the app runs from a fresh clone.
 - Secrets for the deployed app are set in the host settings, not only in a local file.
 - The demo is live at the public URL. Slides and videos do not replace it. Keep one demo account per role (admin and member) and starting data from the seed script.
 - The `README.md` must contain the deployed URL, names and student numbers of all members, and the commands to run the app and the tests. Keep it in sync with the Commands section.

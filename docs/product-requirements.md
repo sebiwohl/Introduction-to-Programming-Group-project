@@ -113,7 +113,9 @@ Two roles. The admin also acts as the moderator.
 ## 4. Data
 
 ### 4.1 Storage
-Data is saved in JSON files, loaded at start-up and saved after every change. SQLite is a possible upgrade, but only the storage module would change.
+Data is kept in the JSON format below, loaded at start-up and saved after every change. Only the storage module reads or writes it.
+
+**Where it lives.** The deployed app runs on Streamlit Community Cloud, which erases local files on every reboot (confirmed with a hosting test on 2026-11-16). So when the `DATABASE_URL` environment variable is set, the data is stored in a Supabase (PostgreSQL) database instead: the whole data structure is one JSON row in the table `app_data`, and backups are rows in `app_data_backups` (the newest 20 of each kind are kept). Each change locks the row (`SELECT ... FOR UPDATE`), so two users saving at the same time cannot overwrite each other, and a failed change is rolled back. Both tables have row level security turned on, so Supabase's public web API cannot read them. Without `DATABASE_URL` (local development and tests) the JSON file described next is used.
 
 All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 1) next to the `users`, `groups`, `events`, `bets` and `polls` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
 
@@ -230,10 +232,11 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 
 ### 5.5 Data protection
 - Only a username and password hash are stored per user, with no email, real name or payment data.
-- Data files stay on the machine running the app.
+- Deployed, the data is stored in the team's Supabase database. The connection string is a secret: it is kept in the host's settings and a git-ignored `.streamlit/secrets.toml`, never in the repository.
 
 ### 5.6 Known limits
-- Because data is in local files, anyone with access to the files could edit them directly. A real version would need a server with a database and access control.
+- Anyone with the database connection string (or access to the local data file) could edit the data directly. The app's own rules only protect actions taken through the app.
+- A free Supabase project pauses after a week without activity and has no automatic backups; the app keeps its own 20 backups in the database.
 - There is no encryption of stored data and no recovery of lost passwords in the first version.
 
 ## 6. Open decisions (collected)
