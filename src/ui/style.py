@@ -33,6 +33,8 @@ CSS = """
            border-radius: 8px; padding: 6px 10px; margin-bottom: 6px;}
 .ci-board-me {outline: 1.5px solid #B4B2A9;}
 .ci-code {font-family: monospace; font-size: 1.05rem; letter-spacing: 1px;}
+.ci-heading {font-weight: 600; font-size: 1.2rem; white-space: nowrap;
+              margin: 0.4rem 0 0.6rem;}
 [class*="st-key-card_"], [data-testid="stForm"],
 [data-testid="stExpander"] details {background: #FFFFFF;}
 [class*="st-key-yes_"] button {background: #EAF3DE; color: #27500A; border-color: #C0DD97;}

@@ -191,6 +191,52 @@ def _summarize(state: _State, event: Event, user: User) -> EventSummary:
     )
 
 
+def _feed(state: _State, user: User) -> List[EventSummary]:
+    """Return the user's visible events, open first (soonest close), then the rest."""
+    events = [
+        e for e in betting.visible_events(user, list(state.events.values()))
+        if e.status != STATUS_DELETED
+    ]
+    open_events = sorted(
+        (e for e in events if e.status == STATUS_OPEN), key=lambda e: e.close_time
+    )
+    other_events = sorted(
+        (e for e in events if e.status != STATUS_OPEN),
+        key=lambda e: e.close_time, reverse=True,
+    )
+    return [_summarize(state, e, user) for e in open_events + other_events]
+
+
+def _bet_history(state: _State, user: User) -> List[BetRecord]:
+    """Return the user's bets with their events' titles and results, newest event first."""
+    records = []
+    for bet in state.bets:
+        if bet.user_id != user.id:
+            continue
+        event = state.events[bet.event_id]
+        records.append(BetRecord(
+            bet=bet, event_title=event.title,
+            event_status=event.status, outcome=event.outcome,
+        ))
+    records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
+    return records
+
+
+def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
+    """Rank the members of the user's group by balance; equal balances share a rank."""
+    if not user.group_id:
+        return []
+    members = [u for u in state.users.values() if u.group_id == user.group_id]
+    members.sort(key=lambda u: (-u.balance, u.username.casefold()))
+    rows, rank, previous = [], 0, None
+    for position, member in enumerate(members, start=1):
+        if member.balance != previous:
+            rank, previous = position, member.balance
+        rows.append(LeaderboardRow(rank=rank, username=member.username,
+                                   balance=member.balance))
+    return rows
+
+
 # --- public functions -------------------------------------------------------
 
 def refresh(now: datetime, path=None) -> int:
@@ -212,6 +258,39 @@ def refresh(now: datetime, path=None) -> int:
 def get_user(user_id: str, path=None) -> User:
     """Return a user, for example to show their balance."""
     return _get_user(_load(path), user_id)
+
+
+@dataclass
+class PageData:
+    """Everything the main screens show, read from one load of the data."""
+
+    user: User
+    group: Optional[Group]
+    events: List[EventSummary]
+    my_bets: List[BetRecord]
+    leaderboard: List[LeaderboardRow]
+
+
+def page_data(user_id: str, now: datetime, path=None) -> PageData:
+    """Return the user, group, feed, own bets and leaderboard from a single load.
+
+    The UI calls this once per page view instead of five separate functions, so
+    the database is read once per click. If an open event is past its close time,
+    it is closed and saved first (rare), and the data is read again.
+    """
+    _require_aware(now, "now")
+    state = _load(path)
+    if _close_expired(state, now):
+        refresh(now, path)
+        state = _load(path)
+    user = _get_user(state, user_id)
+    return PageData(
+        user=user,
+        group=state.groups.get(user.group_id) if user.group_id else None,
+        events=_feed(state, user),
+        my_bets=_bet_history(state, user),
+        leaderboard=_leaderboard(state, user),
+    )
 
 
 def get_group(user_id: str, path=None) -> Optional[Group]:
@@ -265,19 +344,7 @@ def feed(user_id: str, now: datetime, path=None) -> List[EventSummary]:
     """
     refresh(now, path)
     state = _load(path)
-    user = _get_user(state, user_id)
-    events = [
-        e for e in betting.visible_events(user, list(state.events.values()))
-        if e.status != STATUS_DELETED
-    ]
-    open_events = sorted(
-        (e for e in events if e.status == STATUS_OPEN), key=lambda e: e.close_time
-    )
-    other_events = sorted(
-        (e for e in events if e.status != STATUS_OPEN),
-        key=lambda e: e.close_time, reverse=True,
-    )
-    return [_summarize(state, e, user) for e in open_events + other_events]
+    return _feed(state, _get_user(state, user_id))
 
 
 def event_details(user_id: str, event_id: str, now: datetime, path=None) -> EventSummary:
@@ -333,18 +400,7 @@ def resolve_event(
 def bet_history(user_id: str, path=None) -> List[BetRecord]:
     """Return the user's bets with each event's title and result, newest event first."""
     state = _load(path)
-    user = _get_user(state, user_id)
-    records = []
-    for bet in state.bets:
-        if bet.user_id != user.id:
-            continue
-        event = state.events[bet.event_id]
-        records.append(BetRecord(
-            bet=bet, event_title=event.title,
-            event_status=event.status, outcome=event.outcome,
-        ))
-    records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
-    return records
+    return _bet_history(state, _get_user(state, user_id))
 
 
 def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
@@ -353,15 +409,4 @@ def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
     Members with the same balance share a rank and are listed by username.
     """
     state = _load(path)
-    user = _get_user(state, user_id)
-    if not user.group_id:
-        return []
-    members = [u for u in state.users.values() if u.group_id == user.group_id]
-    members.sort(key=lambda u: (-u.balance, u.username.casefold()))
-    rows, rank, previous = [], 0, None
-    for position, member in enumerate(members, start=1):
-        if member.balance != previous:
-            rank, previous = position, member.balance
-        rows.append(LeaderboardRow(rank=rank, username=member.username,
-                                   balance=member.balance))
-    return rows
+    return _leaderboard(state, _get_user(state, user_id))

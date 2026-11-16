@@ -9,7 +9,7 @@ import streamlit as st
 from src import auth, service
 from src.betting import BettingError
 from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_RESOLVED, User
-from src.service import BetRecord, EventSummary
+from src.service import BetRecord, EventSummary, LeaderboardRow, PageData
 from src.ui import style
 from src.ui.actions import attempt
 
@@ -32,8 +32,12 @@ def _my_bets_line(records: List[BetRecord]) -> str:
     """Describe the user's bets on one event, with the payout once it is known."""
     if not records:
         return ""
-    staked = ", ".join(
-        f"{style.money(r.bet.stake)} on {SIDE_LABEL[r.bet.side]}" for r in records
+    totals = {side: Decimal("0") for side in SIDE_LABEL}
+    for record in records:
+        totals[record.bet.side] += record.bet.stake
+    staked = " and ".join(
+        f"{style.money(total)} on {SIDE_LABEL[side]}"
+        for side, total in totals.items() if total
     )
     line = f"You staked {staked}"
     if all(r.bet.payout is not None for r in records):
@@ -147,10 +151,9 @@ def _create_event_form(user: User, now: datetime) -> None:
                 st.rerun()
 
 
-def leaderboard_panel(user: User) -> None:
+def leaderboard_panel(user: User, rows: List[LeaderboardRow]) -> None:
     """Draw the group's leaderboard, with the viewer's own line outlined."""
-    st.subheader("Leaderboard")
-    rows = service.leaderboard(user.id)
+    st.markdown('<div class="ci-heading">Leaderboard</div>', unsafe_allow_html=True)
     st.markdown(
         "".join(
             style.board_row(r.rank, r.username, r.balance, r.username == user.username)
@@ -160,13 +163,13 @@ def leaderboard_panel(user: User) -> None:
     )
 
 
-def events_page(user: User, now: datetime) -> None:
+def events_page(page: PageData, now: datetime) -> None:
     """Draw the main page: tabs with events in the middle, leaderboard on the right."""
-    summaries = service.feed(user.id, now)
-    mine = _bets_by_event(service.bet_history(user.id))
+    user, summaries = page.user, page.events
+    mine = _bets_by_event(page.my_bets)
     current = [s for s in summaries if s.event.status != STATUS_RESOLVED]
     past = [s for s in summaries if s.event.status == STATUS_RESOLVED]
-    middle, right = st.columns([3, 1], gap="large")
+    middle, right = st.columns([5, 2], gap="medium")
     with middle:
         open_tab, past_tab = st.tabs([f"Open events ({len(current)})",
                                       f"Past events ({len(past)})"])
@@ -182,4 +185,4 @@ def events_page(user: User, now: datetime) -> None:
             for summary in past:
                 _past_card(summary, mine.get(summary.event.id, []))
     with right:
-        leaderboard_panel(user)
+        leaderboard_panel(user, page.leaderboard)

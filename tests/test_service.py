@@ -288,3 +288,60 @@ def test_get_group_unknown_user_rejected(path):
     """An unknown user id is rejected."""
     with pytest.raises(BettingError):
         service.get_group("nobody", path)
+
+
+# --- page_data ----------------------------------------------------------------
+
+def test_page_data_matches_the_separate_functions(path):
+    """page_data returns the same numbers as feed, bet_history, leaderboard and get_group."""
+    service.place_bet("u2", "e1", "yes", Decimal("10"), NOW, path)
+    service.place_bet("u3", "e1", "no", Decimal("30"), NOW, path)
+    page = service.page_data("u2", NOW, path)
+    assert page.user == service.get_user("u2", path)
+    assert page.group == service.get_group("u2", path)
+    assert page.events == service.feed("u2", NOW, path)
+    assert page.my_bets == service.bet_history("u2", path)
+    assert page.leaderboard == service.leaderboard("u2", path)
+
+
+def test_page_data_reads_the_data_once(path, monkeypatch):
+    """With nothing to close, the page is built from a single load."""
+    loads = []
+    real_load = storage.load_data
+    monkeypatch.setattr(storage, "load_data", lambda p=None: loads.append(p) or real_load(p))
+    service.page_data("u1", NOW, path)
+    assert len(loads) == 1
+
+
+def test_page_data_closes_expired_events(path):
+    """Events past their close time are closed and saved, like feed() does."""
+    page = service.page_data("u1", AFTER, path)
+    status = {s.event.id: s.event.status for s in page.events}
+    assert status["e1"] == "closed"
+    saved = {e["id"]: e["status"] for e in storage.load_data(path)["events"]}
+    assert saved["e1"] == "closed"
+
+
+def test_page_data_only_shows_own_group(path):
+    """A member never sees another group's events or members."""
+    page = service.page_data("u1", NOW, path)
+    assert "e9" not in {s.event.id for s in page.events}
+    assert {r.username for r in page.leaderboard} == {"Anna", "Ben", "Cleo"}
+
+
+def test_page_data_user_without_group(path):
+    """A user without a group gets no group, no events and an empty leaderboard."""
+    page = service.page_data("u5", NOW, path)
+    assert (page.group, page.events, page.leaderboard) == (None, [], [])
+
+
+def test_page_data_unknown_user_rejected(path):
+    """An unknown user id is rejected."""
+    with pytest.raises(BettingError):
+        service.page_data("nobody", NOW, path)
+
+
+def test_page_data_needs_aware_time(path):
+    """A time without a timezone is rejected."""
+    with pytest.raises(BettingError):
+        service.page_data("u1", datetime(2026, 11, 20, 12, 0), path)

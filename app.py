@@ -1,8 +1,8 @@
 """Called it! Streamlit entry point: start-up checks and page routing.
 
 Run locally:  streamlit run app.py
-Only the user's id is kept in the session; all data is loaded fresh through
-service.py on every run, so every user sees the saved state.
+Only the user's id is kept in the session. Every run loads the data once through
+service.page_data(), so every user sees the saved state at one read per click.
 """
 
 import os
@@ -13,7 +13,7 @@ import streamlit as st
 
 from src import service, storage
 from src.betting import BettingError
-from src.models import User
+from src.service import PageData
 from src.ui import account, events, pages, style
 from src.ui.actions import show_flash
 
@@ -46,32 +46,34 @@ def check_storage_once() -> Optional[str]:
     return warning
 
 
-def current_user() -> Optional[User]:
-    """Return the logged-in user loaded fresh, or None (forgetting a stale id)."""
+def load_page(now: datetime) -> Optional[PageData]:
+    """Return everything for the logged-in user from one load, or None.
+
+    A stale user id (for example, the account no longer exists) is forgotten.
+    """
     user_id = st.session_state.get(account.USER_KEY)
     if not user_id:
         return None
     try:
-        return service.get_user(user_id)
+        return service.page_data(user_id, now)
     except BettingError:
         st.session_state.pop(account.USER_KEY, None)
         return None
 
 
-def show_app(user: User) -> None:
+def show_app(page: PageData, now: datetime) -> None:
     """Draw the sidebar and the page the user picked."""
-    group = service.get_group(user.id)
-    if group is None:
-        account.group_page(user)
+    if page.group is None:
+        account.group_page(page.user)
         return
-    page = pages.sidebar(user, group)
+    choice = pages.sidebar(page.user, page.group)
     show_flash()
-    if page == "Balances":
-        pages.balances_page(user)
-    elif page == "Profile":
-        pages.profile_page(user, group)
+    if choice == "Balances":
+        pages.balances_page(page)
+    elif choice == "Profile":
+        pages.profile_page(page.user, page.group)
     else:
-        events.events_page(user, datetime.now(timezone.utc))
+        events.events_page(page, now)
 
 
 def main() -> None:
@@ -83,11 +85,12 @@ def main() -> None:
         warning = check_storage_once()
         if warning:
             st.warning(warning)
-        user = current_user()
-        if user is None:
+        now = datetime.now(timezone.utc)
+        page = load_page(now)
+        if page is None:
             account.login_page()
         else:
-            show_app(user)
+            show_app(page, now)
     except storage.StorageError as error:
         st.error(f"The app's data could not be loaded or saved: {error}")
 

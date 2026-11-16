@@ -1,9 +1,11 @@
 """The sidebar and the two smaller pages: Balances and Profile."""
 
+from typing import List
+
 import streamlit as st
 
-from src import service
 from src.models import Group, User
+from src.service import BetRecord, PageData
 from src.ui import style
 from src.ui.account import USER_KEY
 from src.ui.events import SIDE_LABEL, leaderboard_panel
@@ -36,10 +38,10 @@ def sidebar(user: User, group: Group) -> str:
     return page
 
 
-def _history_rows(user: User) -> list:
+def _history_rows(records: List[BetRecord]) -> list:
     """Return the user's bets as table rows."""
     rows = []
-    for record in service.bet_history(user.id):
+    for record in records:
         payout = record.bet.payout
         rows.append({
             "Event": record.event_title,
@@ -52,16 +54,16 @@ def _history_rows(user: User) -> list:
     return rows
 
 
-def balances_page(user: User) -> None:
+def balances_page(page: PageData) -> None:
     """Draw the Balances page: own balance, the leaderboard and the bet history."""
     st.header("Balances")
     left, right = st.columns([1, 2], gap="large")
     with left:
-        st.metric("Your balance", style.money(user.balance))
-        leaderboard_panel(user)
+        st.metric("Your balance", style.money(page.user.balance))
+        leaderboard_panel(page.user, page.leaderboard)
     with right:
         st.subheader("Your bets")
-        rows = _history_rows(user)
+        rows = _history_rows(page.my_bets)
         if rows:
             st.dataframe(rows, hide_index=True, width="stretch")
         else:
