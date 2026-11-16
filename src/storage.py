@@ -476,10 +476,91 @@ def _psycopg() -> Any:
 
 
 def _connect(psycopg: Any, url: str) -> Any:
-    """Open a connection; prepared statements are off so Supabase poolers work."""
+    """Open a connection; prepared statements are off so Supabase poolers work.
+
+    Autocommit is on: each use wraps its work in conn.transaction(), so an idle
+    connection never sits inside an open transaction.
+    """
     return psycopg.connect(
-        url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS, prepare_threshold=None
+        url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS, prepare_threshold=None,
+        autocommit=True,
     )
+
+
+# Opening a database connection costs several network round trips (often more
+# than the query itself), so finished connections are kept and reused. Each
+# connection is used by one caller at a time.
+MAX_IDLE_CONNECTIONS = 4
+IDLE_CHECK_SECONDS = 60
+
+_POOL_LOCK = threading.Lock()
+_IDLE: dict[str, list[tuple[Any, float]]] = {}
+
+
+def _is_reusable(conn: Any) -> bool:
+    """Return True if the connection is open and not inside a transaction."""
+    from psycopg.pq import TransactionStatus
+
+    return not conn.closed and conn.info.transaction_status == TransactionStatus.IDLE
+
+
+def _still_alive(conn: Any) -> bool:
+    """Return True if a quick query succeeds (the server may drop idle connections)."""
+    try:
+        conn.execute("SELECT 1")
+    except Exception:  # any failure means: do not use this connection
+        return False
+    return True
+
+
+def _close_quietly(conn: Any) -> None:
+    """Close a connection, ignoring errors (it may already be broken)."""
+    with contextlib.suppress(Exception):
+        conn.close()
+
+
+def _take_connection(psycopg: Any, url: str) -> Any:
+    """Return a reusable idle connection, or open a new one.
+
+    A connection idle for longer than IDLE_CHECK_SECONDS is tested first, because
+    the server may have closed it in the meantime.
+    """
+    now = time.monotonic()
+    while True:
+        with _POOL_LOCK:
+            idle = _IDLE.get(url)
+            if not idle:
+                break
+            conn, since = idle.pop()
+        if not _is_reusable(conn):
+            _close_quietly(conn)
+        elif now - since > IDLE_CHECK_SECONDS and not _still_alive(conn):
+            _close_quietly(conn)
+        else:
+            return conn
+    return _connect(psycopg, url)
+
+
+def _give_back_connection(url: str, conn: Any) -> None:
+    """Keep a healthy connection for the next caller; close it if broken or surplus."""
+    if not _is_reusable(conn):
+        _close_quietly(conn)
+        return
+    with _POOL_LOCK:
+        idle = _IDLE.setdefault(url, [])
+        if len(idle) < MAX_IDLE_CONNECTIONS:
+            idle.append((conn, time.monotonic()))
+            return
+    _close_quietly(conn)
+
+
+def close_connections() -> None:
+    """Close all kept database connections (for tests and clean shutdown)."""
+    with _POOL_LOCK:
+        kept = [conn for idle in _IDLE.values() for conn, _ in idle]
+        _IDLE.clear()
+    for conn in kept:
+        _close_quietly(conn)
 
 
 def _database_error(error: Exception) -> StorageError:
@@ -501,13 +582,18 @@ def _db_cursor(url: str) -> Iterator[Any]:
     """Yield a cursor inside one database transaction.
 
     The transaction commits when the block ends and rolls back if it raises.
-    Database errors become StorageError; other errors pass through unchanged.
+    The connection is reused afterwards (see _take_connection). Database errors
+    become StorageError; other errors pass through unchanged.
     """
     psycopg = _psycopg()
     try:
         _ensure_tables(psycopg, url)
-        with _connect(psycopg, url) as conn, conn.cursor() as cur:
-            yield cur
+        conn = _take_connection(psycopg, url)
+        try:
+            with conn.transaction(), conn.cursor() as cur:
+                yield cur
+        finally:
+            _give_back_connection(url, conn)
     except psycopg.Error as error:
         raise _database_error(error) from error
 
