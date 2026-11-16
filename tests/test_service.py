@@ -263,3 +263,28 @@ def test_leaderboard_ties_share_a_rank(path):
 
 def test_leaderboard_without_group_is_empty(path):
     assert service.leaderboard("u5", path) == []
+
+
+# --- get_group ----------------------------------------------------------------
+
+def test_get_group_returns_own_group(path):
+    """A member gets their own group, with its name and invite code."""
+    group = service.get_group("u2", path)
+    assert (group.id, group.name, group.invite_code) == ("g1", "Friends", "AAA")
+
+
+def test_get_group_never_returns_another_group(path):
+    """Each user only ever gets the group they belong to."""
+    assert service.get_group("u4", path).id == "g2"
+    assert service.get_group("u1", path).id == "g1"
+
+
+def test_get_group_without_group_is_none(path):
+    """A user who has not joined a group gets None."""
+    assert service.get_group("u5", path) is None
+
+
+def test_get_group_unknown_user_rejected(path):
+    """An unknown user id is rejected."""
+    with pytest.raises(BettingError):
+        service.get_group("nobody", path)

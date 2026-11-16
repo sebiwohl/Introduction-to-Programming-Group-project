@@ -1,0 +1,8 @@
+# Theme A, "clean light". Change colours and font here; no code needs to change.
+[theme]
+base = "light"
+primaryColor = "#3B6D11"
+backgroundColor = "#F1EFE8"
+secondaryBackgroundColor = "#E7E5DC"
+textColor = "#2C2C2A"
+font = "sans serif"

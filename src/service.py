@@ -214,6 +214,15 @@ def get_user(user_id: str, path=None) -> User:
     return _get_user(_load(path), user_id)
 
 
+def get_group(user_id: str, path=None) -> Optional[Group]:
+    """Return the user's own group (name, invite code), or None if they have none."""
+    state = _load(path)
+    user = _get_user(state, user_id)
+    if not user.group_id:
+        return None
+    return state.groups.get(user.group_id)
+
+
 def create_event(
     user_id: str,
     title: str,

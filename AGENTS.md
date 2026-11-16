@@ -30,7 +30,7 @@ Update this section if any command changes.
 - `src/auth.py`: sign-up, login, password hashing, the shared permission check
 - `src/betting.py`: pool, odds, placing bets, closing, resolving, payouts
 - `src/moderation.py`: flags and polls
-- `src/pages/` or UI helpers: Streamlit screens only, no business logic
+- `src/ui/`: Streamlit screens only, no business logic (`style.py` holds the CSS; colours and font are in `.streamlit/config.toml`)
 - `scripts/seed.py`: demo and test data
 - `tests/`: tests
 - `docs/`: requirements

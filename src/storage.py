@@ -452,10 +452,13 @@ class _SecretUrl(str):
 def _database_url(path: PathArg) -> str | None:
     """Return the database URL to use, or None to use the file.
 
-    A path argument always means the file. Otherwise $DATABASE_URL, if set and not
-    empty, selects the database. The URL is wrapped so it is never printed.
+    A path argument always means the file, and so does $DATA_FILE: whoever sets it
+    chose a local file on purpose (Streamlit copies secrets such as DATABASE_URL
+    into the environment by itself, so this is the way to stay off the database).
+    Otherwise $DATABASE_URL, if set and not empty, selects the database. The URL
+    is wrapped so it is never printed.
     """
-    if path is not None:
+    if path is not None or os.environ.get("DATA_FILE"):
         return None
     value = os.environ.get(DATABASE_URL_ENV)
     return _SecretUrl(value) if value else None

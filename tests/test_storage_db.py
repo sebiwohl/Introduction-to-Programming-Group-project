@@ -58,6 +58,16 @@ def test_database_url_selects_database(monkeypatch):
     assert storage._database_url(None) == UNREACHABLE_URL
 
 
+def test_data_file_wins_over_database_url(monkeypatch, tmp_path):
+    """With DATA_FILE set, the file is used even if DATABASE_URL is set too."""
+    monkeypatch.setenv("DATABASE_URL", UNREACHABLE_URL)
+    monkeypatch.setenv("DATA_FILE", str(tmp_path / "data.json"))
+    assert storage._database_url(None) is None
+    storage.save_data(sample_data())
+    assert (tmp_path / "data.json").exists()
+    assert storage.load_data() == sample_data()
+
+
 def test_explicit_path_always_means_file(monkeypatch, tmp_path):
     """A path argument wins over DATABASE_URL, so file tests never touch a database."""
     monkeypatch.setenv("DATABASE_URL", UNREACHABLE_URL)
@@ -132,6 +142,7 @@ def db(monkeypatch):
     """Point storage at an empty test database: drop the tables before each test."""
     run_sql("DROP TABLE IF EXISTS app_data, app_data_backups")
     storage._READY_DATABASES.clear()
+    monkeypatch.delenv("DATA_FILE", raising=False)
     monkeypatch.setenv("DATABASE_URL", TEST_URL)
     yield  # yields nothing, so failure reports cannot print the URL
     storage._READY_DATABASES.clear()
