@@ -578,10 +578,12 @@ def _ensure_tables(psycopg: Any, url: str) -> None:
 
 
 @contextlib.contextmanager
-def _db_cursor(url: str) -> Iterator[Any]:
+def _db_cursor(url: str, in_transaction: bool = True) -> Iterator[Any]:
     """Yield a cursor inside one database transaction.
 
     The transaction commits when the block ends and rolls back if it raises.
+    With in_transaction=False there is no BEGIN/COMMIT (two fewer network round
+    trips); use that only for a single read, which is consistent on its own.
     The connection is reused afterwards (see _take_connection). Database errors
     become StorageError; other errors pass through unchanged.
     """
@@ -590,8 +592,12 @@ def _db_cursor(url: str) -> Iterator[Any]:
         _ensure_tables(psycopg, url)
         conn = _take_connection(psycopg, url)
         try:
-            with conn.transaction(), conn.cursor() as cur:
-                yield cur
+            if in_transaction:
+                with conn.transaction(), conn.cursor() as cur:
+                    yield cur
+            else:
+                with conn.cursor() as cur:
+                    yield cur
         finally:
             _give_back_connection(url, conn)
     except psycopg.Error as error:
@@ -640,22 +646,32 @@ def _db_write(cur: Any, data: Data) -> None:
 
 
 def _db_prune(cur: Any) -> None:
-    """Keep only the newest MAX_BACKUPS rows of each backup kind."""
-    for kind in ("backup", "corrupt"):
-        cur.execute(
-            "DELETE FROM app_data_backups WHERE kind = %s AND id NOT IN ("
-            "SELECT id FROM app_data_backups WHERE kind = %s "
-            "ORDER BY id DESC LIMIT %s)",
-            (kind, kind, MAX_BACKUPS),
-        )
+    """Keep only the newest MAX_BACKUPS rows of each backup kind (one statement)."""
+    cur.execute(
+        "DELETE FROM app_data_backups WHERE id IN ("
+        "SELECT id FROM (SELECT id, row_number() OVER "
+        "(PARTITION BY kind ORDER BY id DESC) AS position FROM app_data_backups) AS ranked "
+        "WHERE position > %s)",
+        (MAX_BACKUPS,),
+    )
 
 
 def _db_save(cur: Any, data: Data, previous: Any) -> None:
-    """Back up the previous data (if any), write the new data, prune old backups."""
-    if previous is not None:
-        _db_add_backup(cur, previous, "backup")
-    _db_write(cur, data)
-    _db_prune(cur)
+    """Back up the previous data (if any), write the new data, prune old backups.
+
+    The row must already be locked (previous was read FOR UPDATE in this
+    transaction). The backup is copied inside the database instead of sending
+    the old data back over the network, and the three statements go out together
+    in one pipeline, so a save costs one round trip instead of four.
+    """
+    with cur.connection.pipeline():
+        if previous is not None:
+            cur.execute(
+                "INSERT INTO app_data_backups (kind, data) "
+                "SELECT 'backup', data FROM app_data WHERE id = 1"
+            )
+        _db_write(cur, data)
+        _db_prune(cur)
 
 
 def _backup_name(row_id: int, saved_at: datetime) -> str:
@@ -742,7 +758,7 @@ def load_data(path: PathArg = None) -> Data:
     """
     url = _database_url(path)
     if url is not None:
-        with _db_cursor(url) as cur:
+        with _db_cursor(url, in_transaction=False) as cur:
             return _db_validated(_db_read(cur))
     file = _resolve_path(path)
     if not file.exists():
