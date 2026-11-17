@@ -1,0 +1,270 @@
+"""Numbers the screens show that are worked out from existing data, never stored.
+
+Pure functions only: no Streamlit, no storage. They take what service.page_data()
+returns (event summaries, the user's bet records, leaderboard rows) and compute
+hit rates, best calls, streaks, filters and rankings for display.
+
+A "call" is one member's stake on one side of a resolved event. Refunded calls
+(only one side had bets) count neither as right nor as wrong.
+"""
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from decimal import ROUND_DOWN, Decimal
+from typing import Dict, List, Optional
+
+from src.models import (
+    CENT,
+    SIDE_NO,
+    SIDE_YES,
+    STATUS_CLOSED,
+    STATUS_DELETED,
+    STATUS_OPEN,
+    STATUS_PAUSED,
+    STATUS_RESOLVED,
+)
+from src.service import BetRecord, EventSummary, LeaderboardRow
+
+WON = "won"
+LOST = "lost"
+REFUNDED = "refunded"
+AWAITING = "awaiting"
+OPEN = "open"
+PAUSED = "paused"
+
+CLOSING_SOON = timedelta(hours=24)
+FEED_FILTERS = ("All", "Open", "Closing soon", "Awaiting result", "Done")
+RANKINGS = ("Coins", "Hit rate", "Best call", "Streak")
+UNSETTLED = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
+
+
+@dataclass
+class MemberStats:
+    """One member's record on resolved events.
+
+    streak is positive for wins in a row and negative for losses in a row.
+    """
+
+    right: int = 0
+    settled: int = 0
+    best_odds: Optional[float] = None
+    best_title: str = ""
+    streak: int = 0
+
+    @property
+    def hit_rate(self) -> Optional[float]:
+        """Return the share of settled calls that were right, or None without any."""
+        return self.right / self.settled if self.settled else None
+
+
+def call_result(side: str, outcome: str, stake_yes: Decimal, stake_no: Decimal) -> str:
+    """Return WON, LOST or REFUNDED for a stake on `side` once `outcome` is set.
+
+    If only one side had bets, every stake was refunded (betting.resolve_event).
+    """
+    if stake_yes == 0 or stake_no == 0:
+        return REFUNDED
+    return WON if side == outcome else LOST
+
+
+def bet_result(record: BetRecord) -> str:
+    """Return the state of one of the user's bets, as the My bets table shows it.
+
+    OPEN, PAUSED or AWAITING while the event is not settled; WON, LOST or
+    REFUNDED once it is (a deleted event refunds every stake). A winner's
+    payout is always above the stake, a refund equals it, a loss is zero.
+    """
+    status = record.event_status
+    if status == STATUS_OPEN:
+        return OPEN
+    if status == STATUS_PAUSED:
+        return PAUSED
+    if status == STATUS_CLOSED:
+        return AWAITING
+    if status == STATUS_DELETED or record.bet.payout is None:
+        return REFUNDED
+    if record.bet.payout > record.bet.stake:
+        return WON
+    return REFUNDED if record.bet.payout == record.bet.stake else LOST
+
+
+def _add_call(stats: MemberStats, result: str, odds: Optional[float], title: str) -> None:
+    """Update one member's record with one settled call (in close-time order)."""
+    stats.settled += 1
+    if result == WON:
+        stats.right += 1
+        stats.streak = stats.streak + 1 if stats.streak > 0 else 1
+        if odds is not None and (stats.best_odds is None or odds > stats.best_odds):
+            stats.best_odds, stats.best_title = odds, title
+    else:
+        stats.streak = stats.streak - 1 if stats.streak < 0 else -1
+
+
+def member_stats(summaries: List[EventSummary]) -> Dict[str, MemberStats]:
+    """Return every bettor's hit rate, best winning odds and current streak.
+
+    Resolved events are taken oldest first (by close time), so the streak is
+    the run of wins or losses up to the latest event. Members without settled
+    calls are missing from the result.
+    """
+    resolved = sorted(
+        (s for s in summaries if s.event.status == STATUS_RESOLVED),
+        key=lambda s: s.event.close_time,
+    )
+    stats: Dict[str, MemberStats] = {}
+    for summary in resolved:
+        outcome = summary.event.outcome
+        odds = summary.odds_yes if outcome == SIDE_YES else summary.odds_no
+        for bettor in summary.bettors:
+            result = call_result(bettor.side, outcome, summary.stake_yes, summary.stake_no)
+            if result == REFUNDED:
+                continue
+            _add_call(stats.setdefault(bettor.username, MemberStats()),
+                      result, odds, summary.event.title)
+    return stats
+
+
+def side_odds(summary: EventSummary, side: str) -> Optional[float]:
+    """Return the odds of one side of an event (None if nobody backed it)."""
+    return summary.odds_yes if side == SIDE_YES else summary.odds_no
+
+
+def estimated_profit(stake: Decimal, summary: EventSummary, side: str) -> Optional[Decimal]:
+    """Return what a stake on `side` would win on top of itself at today's odds.
+
+    stake x pool / stake on that side, minus the stake, rounded down to the cent.
+    None if nobody backed that side. Only an estimate while betting is open.
+    """
+    side_stake = summary.stake_yes if side == SIDE_YES else summary.stake_no
+    if side_stake == 0:
+        return None
+    payout = stake * summary.pool / side_stake
+    return (payout - stake).quantize(CENT, rounding=ROUND_DOWN)
+
+
+def in_play(records: List[BetRecord]) -> Decimal:
+    """Return the user's total stake on events that are not settled yet."""
+    return sum(
+        (r.bet.stake for r in records if r.event_status in UNSETTLED), Decimal("0")
+    )
+
+
+def latest_win(records: List[BetRecord]) -> Optional[BetRecord]:
+    """Return the user's newest settled bet if it was a win, else None.
+
+    Records come newest event first (service._bet_history); refunds are skipped.
+    """
+    for record in records:
+        result = bet_result(record)
+        if result in (WON, LOST):
+            return record if result == WON else None
+    return None
+
+
+def next_above(rows: List[LeaderboardRow], username: str) -> Optional[LeaderboardRow]:
+    """Return the member with the smallest balance above the user's, or None if leading."""
+    mine = next((r for r in rows if r.username == username), None)
+    if mine is None:
+        return None
+    above = [r for r in rows if r.balance > mine.balance]
+    return min(above, key=lambda r: r.balance) if above else None
+
+
+def closest_rival(rows: List[LeaderboardRow], username: str) -> Optional[LeaderboardRow]:
+    """Return the member just above the user, or just below if the user leads."""
+    above = next_above(rows, username)
+    if above is not None:
+        return above
+    mine = next((r for r in rows if r.username == username), None)
+    others = [r for r in rows if r.username != username]
+    if mine is None or not others:
+        return None
+    return max(others, key=lambda r: r.balance)
+
+
+def filter_events(summaries: List[EventSummary], choice: str, now: datetime) -> List[EventSummary]:
+    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all."""
+    def keep(summary: EventSummary) -> bool:
+        """Return True if the event belongs in the chosen tab."""
+        status = summary.event.status
+        if choice == "Open":
+            return status == STATUS_OPEN
+        if choice == "Closing soon":
+            return status == STATUS_OPEN and summary.event.close_time - now <= CLOSING_SOON
+        if choice == "Awaiting result":
+            return status == STATUS_CLOSED
+        if choice == "Done":
+            return status == STATUS_RESOLVED
+        return True
+    return [s for s in summaries if keep(s)]
+
+
+FEED_ORDER = {STATUS_OPEN: 0, STATUS_PAUSED: 1, STATUS_CLOSED: 2, STATUS_RESOLVED: 3}
+
+
+def feed_order(summaries: List[EventSummary]) -> List[EventSummary]:
+    """Return open events first, then paused, then waiting for a result, then done.
+
+    The sort is stable, so the service's order inside each group is kept
+    (open: soonest close first; the rest: newest first).
+    """
+    return sorted(summaries, key=lambda s: FEED_ORDER.get(s.event.status, len(FEED_ORDER)))
+
+
+def count_by_status(summaries: List[EventSummary]) -> Dict[str, int]:
+    """Return how many events are in each status, e.g. {'open': 2, 'closed': 1}."""
+    counts: Dict[str, int] = {}
+    for summary in summaries:
+        counts[summary.event.status] = counts.get(summary.event.status, 0) + 1
+    return counts
+
+
+def rank_members(
+    rows: List[LeaderboardRow], stats: Dict[str, MemberStats], ranking: str
+) -> List[LeaderboardRow]:
+    """Return the rows sorted by one of RANKINGS, best first; ties keep coin order.
+
+    Members without settled calls go last for hit rate, best call and streak.
+    """
+    def value(row: LeaderboardRow):
+        """Return the sort value of one row (higher is better)."""
+        member = stats.get(row.username, MemberStats())
+        if ranking == "Hit rate":
+            return member.hit_rate if member.hit_rate is not None else -1.0
+        if ranking == "Best call":
+            return member.best_odds if member.best_odds is not None else -1.0
+        if ranking == "Streak":
+            return member.streak if member.settled else float("-inf")
+        return row.balance
+    return sorted(rows, key=value, reverse=True)
+
+
+@dataclass
+class Nudge:
+    """An open event the user has not bet on yet, and where the pool leans."""
+
+    summary: EventSummary
+    side: str
+    share: int
+    bettors: int
+
+
+def nudge(summaries: List[EventSummary], username: str) -> Optional[Nudge]:
+    """Return the open event with the biggest pool that the user has not bet on.
+
+    share is the percentage of the pool on the leading side (YES on a tie);
+    bettors is how many members have bet on it. None if there is no such event.
+    """
+    candidates = [
+        s for s in summaries
+        if s.event.status == STATUS_OPEN and s.pool > 0
+        and all(b.username != username for b in s.bettors)
+    ]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda s: s.pool)
+    side = SIDE_YES if best.stake_yes >= best.stake_no else SIDE_NO
+    lead = best.stake_yes if side == SIDE_YES else best.stake_no
+    names = {b.username for b in best.bettors}
+    return Nudge(summary=best, side=side, share=round(lead / best.pool * 100),
+                 bettors=len(names))

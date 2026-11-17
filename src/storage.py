@@ -452,10 +452,13 @@ class _SecretUrl(str):
 def _database_url(path: PathArg) -> str | None:
     """Return the database URL to use, or None to use the file.
 
-    A path argument always means the file. Otherwise $DATABASE_URL, if set and not
-    empty, selects the database. The URL is wrapped so it is never printed.
+    A path argument always means the file, and so does $DATA_FILE: whoever sets it
+    chose a local file on purpose (Streamlit copies secrets such as DATABASE_URL
+    into the environment by itself, so this is the way to stay off the database).
+    Otherwise $DATABASE_URL, if set and not empty, selects the database. The URL
+    is wrapped so it is never printed.
     """
-    if path is not None:
+    if path is not None or os.environ.get("DATA_FILE"):
         return None
     value = os.environ.get(DATABASE_URL_ENV)
     return _SecretUrl(value) if value else None
@@ -473,10 +476,91 @@ def _psycopg() -> Any:
 
 
 def _connect(psycopg: Any, url: str) -> Any:
-    """Open a connection; prepared statements are off so Supabase poolers work."""
+    """Open a connection; prepared statements are off so Supabase poolers work.
+
+    Autocommit is on: each use wraps its work in conn.transaction(), so an idle
+    connection never sits inside an open transaction.
+    """
     return psycopg.connect(
-        url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS, prepare_threshold=None
+        url, connect_timeout=DB_CONNECT_TIMEOUT_SECONDS, prepare_threshold=None,
+        autocommit=True,
     )
+
+
+# Opening a database connection costs several network round trips (often more
+# than the query itself), so finished connections are kept and reused. Each
+# connection is used by one caller at a time.
+MAX_IDLE_CONNECTIONS = 4
+IDLE_CHECK_SECONDS = 60
+
+_POOL_LOCK = threading.Lock()
+_IDLE: dict[str, list[tuple[Any, float]]] = {}
+
+
+def _is_reusable(conn: Any) -> bool:
+    """Return True if the connection is open and not inside a transaction."""
+    from psycopg.pq import TransactionStatus
+
+    return not conn.closed and conn.info.transaction_status == TransactionStatus.IDLE
+
+
+def _still_alive(conn: Any) -> bool:
+    """Return True if a quick query succeeds (the server may drop idle connections)."""
+    try:
+        conn.execute("SELECT 1")
+    except Exception:  # any failure means: do not use this connection
+        return False
+    return True
+
+
+def _close_quietly(conn: Any) -> None:
+    """Close a connection, ignoring errors (it may already be broken)."""
+    with contextlib.suppress(Exception):
+        conn.close()
+
+
+def _take_connection(psycopg: Any, url: str) -> Any:
+    """Return a reusable idle connection, or open a new one.
+
+    A connection idle for longer than IDLE_CHECK_SECONDS is tested first, because
+    the server may have closed it in the meantime.
+    """
+    now = time.monotonic()
+    while True:
+        with _POOL_LOCK:
+            idle = _IDLE.get(url)
+            if not idle:
+                break
+            conn, since = idle.pop()
+        if not _is_reusable(conn):
+            _close_quietly(conn)
+        elif now - since > IDLE_CHECK_SECONDS and not _still_alive(conn):
+            _close_quietly(conn)
+        else:
+            return conn
+    return _connect(psycopg, url)
+
+
+def _give_back_connection(url: str, conn: Any) -> None:
+    """Keep a healthy connection for the next caller; close it if broken or surplus."""
+    if not _is_reusable(conn):
+        _close_quietly(conn)
+        return
+    with _POOL_LOCK:
+        idle = _IDLE.setdefault(url, [])
+        if len(idle) < MAX_IDLE_CONNECTIONS:
+            idle.append((conn, time.monotonic()))
+            return
+    _close_quietly(conn)
+
+
+def close_connections() -> None:
+    """Close all kept database connections (for tests and clean shutdown)."""
+    with _POOL_LOCK:
+        kept = [conn for idle in _IDLE.values() for conn, _ in idle]
+        _IDLE.clear()
+    for conn in kept:
+        _close_quietly(conn)
 
 
 def _database_error(error: Exception) -> StorageError:
@@ -494,17 +578,28 @@ def _ensure_tables(psycopg: Any, url: str) -> None:
 
 
 @contextlib.contextmanager
-def _db_cursor(url: str) -> Iterator[Any]:
+def _db_cursor(url: str, in_transaction: bool = True) -> Iterator[Any]:
     """Yield a cursor inside one database transaction.
 
     The transaction commits when the block ends and rolls back if it raises.
-    Database errors become StorageError; other errors pass through unchanged.
+    With in_transaction=False there is no BEGIN/COMMIT (two fewer network round
+    trips); use that only for a single read, which is consistent on its own.
+    The connection is reused afterwards (see _take_connection). Database errors
+    become StorageError; other errors pass through unchanged.
     """
     psycopg = _psycopg()
     try:
         _ensure_tables(psycopg, url)
-        with _connect(psycopg, url) as conn, conn.cursor() as cur:
-            yield cur
+        conn = _take_connection(psycopg, url)
+        try:
+            if in_transaction:
+                with conn.transaction(), conn.cursor() as cur:
+                    yield cur
+            else:
+                with conn.cursor() as cur:
+                    yield cur
+        finally:
+            _give_back_connection(url, conn)
     except psycopg.Error as error:
         raise _database_error(error) from error
 
@@ -551,22 +646,32 @@ def _db_write(cur: Any, data: Data) -> None:
 
 
 def _db_prune(cur: Any) -> None:
-    """Keep only the newest MAX_BACKUPS rows of each backup kind."""
-    for kind in ("backup", "corrupt"):
-        cur.execute(
-            "DELETE FROM app_data_backups WHERE kind = %s AND id NOT IN ("
-            "SELECT id FROM app_data_backups WHERE kind = %s "
-            "ORDER BY id DESC LIMIT %s)",
-            (kind, kind, MAX_BACKUPS),
-        )
+    """Keep only the newest MAX_BACKUPS rows of each backup kind (one statement)."""
+    cur.execute(
+        "DELETE FROM app_data_backups WHERE id IN ("
+        "SELECT id FROM (SELECT id, row_number() OVER "
+        "(PARTITION BY kind ORDER BY id DESC) AS position FROM app_data_backups) AS ranked "
+        "WHERE position > %s)",
+        (MAX_BACKUPS,),
+    )
 
 
 def _db_save(cur: Any, data: Data, previous: Any) -> None:
-    """Back up the previous data (if any), write the new data, prune old backups."""
-    if previous is not None:
-        _db_add_backup(cur, previous, "backup")
-    _db_write(cur, data)
-    _db_prune(cur)
+    """Back up the previous data (if any), write the new data, prune old backups.
+
+    The row must already be locked (previous was read FOR UPDATE in this
+    transaction). The backup is copied inside the database instead of sending
+    the old data back over the network, and the three statements go out together
+    in one pipeline, so a save costs one round trip instead of four.
+    """
+    with cur.connection.pipeline():
+        if previous is not None:
+            cur.execute(
+                "INSERT INTO app_data_backups (kind, data) "
+                "SELECT 'backup', data FROM app_data WHERE id = 1"
+            )
+        _db_write(cur, data)
+        _db_prune(cur)
 
 
 def _backup_name(row_id: int, saved_at: datetime) -> str:
@@ -653,7 +758,7 @@ def load_data(path: PathArg = None) -> Data:
     """
     url = _database_url(path)
     if url is not None:
-        with _db_cursor(url) as cur:
+        with _db_cursor(url, in_transaction=False) as cur:
             return _db_validated(_db_read(cur))
     file = _resolve_path(path)
     if not file.exists():

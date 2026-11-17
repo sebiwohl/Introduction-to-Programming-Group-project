@@ -12,7 +12,7 @@ auth.py. Not here yet: moderation (flags and polls).
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -37,6 +37,7 @@ from src.models import (
     STATUS_CLOSED,
     STATUS_DELETED,
     STATUS_OPEN,
+    STATUS_PAUSED,
     Bet,
     Event,
     Group,
@@ -51,8 +52,21 @@ MAX_DESCRIPTION_LENGTH = 500
 # --- results returned to the UI ---------------------------------------------
 
 @dataclass
+class Bettor:
+    """One member's total stake on one side of an event (all their bets added up)."""
+
+    username: str
+    side: str
+    stake: Decimal
+
+
+@dataclass
 class EventSummary:
-    """An event with the numbers the feed shows."""
+    """An event with the numbers the feed shows.
+
+    creator_name and bettors are read-only extras for the feed: who created the
+    event and who backed which side (largest stake first).
+    """
 
     event: Event
     pool: Decimal
@@ -61,6 +75,8 @@ class EventSummary:
     odds_yes: Optional[float]
     odds_no: Optional[float]
     my_stake: Decimal
+    creator_name: str = ""
+    bettors: List[Bettor] = field(default_factory=list)
 
 
 @dataclass
@@ -75,11 +91,17 @@ class BetRecord:
 
 @dataclass
 class LeaderboardRow:
-    """One member's place on the leaderboard."""
+    """One member's place on the leaderboard.
+
+    open_bets counts the member's bets that are not settled yet (event open,
+    paused or waiting for its result).
+    """
 
     rank: int
     username: str
     balance: Decimal
+    is_admin: bool = False
+    open_bets: int = 0
 
 
 # --- loading and saving -------------------------------------------------------
@@ -175,6 +197,26 @@ def _close_expired(state: _State, now: datetime) -> int:
     return closed
 
 
+def _username(state: _State, user_id: str) -> str:
+    """Return a user's name, or a placeholder if the account no longer exists."""
+    user = state.users.get(user_id)
+    return user.username if user else "Unknown"
+
+
+def _bettors(state: _State, bets: List[Bet]) -> List[Bettor]:
+    """Add up each member's stake per side; largest stake first, then by name."""
+    totals: Dict[tuple, Decimal] = {}
+    for bet in bets:
+        key = (bet.user_id, bet.side)
+        totals[key] = totals.get(key, Decimal("0")) + bet.stake
+    bettors = [
+        Bettor(username=_username(state, user_id), side=side, stake=stake)
+        for (user_id, side), stake in totals.items()
+    ]
+    bettors.sort(key=lambda b: (-b.stake, b.username.casefold()))
+    return bettors
+
+
 def _summarize(state: _State, event: Event, user: User) -> EventSummary:
     """Return the feed numbers for one event."""
     bets = _bets_on(state, event.id)
@@ -188,7 +230,70 @@ def _summarize(state: _State, event: Event, user: User) -> EventSummary:
         odds_yes=betting.odds(bets, SIDE_YES),
         odds_no=betting.odds(bets, SIDE_NO),
         my_stake=my_stake,
+        creator_name=_username(state, event.creator_id),
+        bettors=_bettors(state, bets),
     )
+
+
+def _feed(state: _State, user: User) -> List[EventSummary]:
+    """Return the user's visible events, open first (soonest close), then the rest."""
+    events = [
+        e for e in betting.visible_events(user, list(state.events.values()))
+        if e.status != STATUS_DELETED
+    ]
+    open_events = sorted(
+        (e for e in events if e.status == STATUS_OPEN), key=lambda e: e.close_time
+    )
+    other_events = sorted(
+        (e for e in events if e.status != STATUS_OPEN),
+        key=lambda e: e.close_time, reverse=True,
+    )
+    return [_summarize(state, e, user) for e in open_events + other_events]
+
+
+def _bet_history(state: _State, user: User) -> List[BetRecord]:
+    """Return the user's bets with their events' titles and results, newest event first."""
+    records = []
+    for bet in state.bets:
+        if bet.user_id != user.id:
+            continue
+        event = state.events[bet.event_id]
+        records.append(BetRecord(
+            bet=bet, event_title=event.title,
+            event_status=event.status, outcome=event.outcome,
+        ))
+    records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
+    return records
+
+
+def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
+    """Rank the members of the user's group by balance; equal balances share a rank."""
+    if not user.group_id:
+        return []
+    members = [u for u in state.users.values() if u.group_id == user.group_id]
+    members.sort(key=lambda u: (-u.balance, u.username.casefold()))
+    open_bets = _open_bet_counts(state)
+    rows, rank, previous = [], 0, None
+    for position, member in enumerate(members, start=1):
+        if member.balance != previous:
+            rank, previous = position, member.balance
+        rows.append(LeaderboardRow(
+            rank=rank, username=member.username, balance=member.balance,
+            is_admin=auth.is_group_admin(member, user.group_id),
+            open_bets=open_bets.get(member.id, 0),
+        ))
+    return rows
+
+
+def _open_bet_counts(state: _State) -> Dict[str, int]:
+    """Count each user's bets that are not settled yet (open, paused or closed event)."""
+    unsettled = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
+    counts: Dict[str, int] = {}
+    for bet in state.bets:
+        event = state.events.get(bet.event_id)
+        if event is not None and event.status in unsettled and bet.payout is None:
+            counts[bet.user_id] = counts.get(bet.user_id, 0) + 1
+    return counts
 
 
 # --- public functions -------------------------------------------------------
@@ -212,6 +317,48 @@ def refresh(now: datetime, path=None) -> int:
 def get_user(user_id: str, path=None) -> User:
     """Return a user, for example to show their balance."""
     return _get_user(_load(path), user_id)
+
+
+@dataclass
+class PageData:
+    """Everything the main screens show, read from one load of the data."""
+
+    user: User
+    group: Optional[Group]
+    events: List[EventSummary]
+    my_bets: List[BetRecord]
+    leaderboard: List[LeaderboardRow]
+
+
+def page_data(user_id: str, now: datetime, path=None) -> PageData:
+    """Return the user, group, feed, own bets and leaderboard from a single load.
+
+    The UI calls this once per page view instead of five separate functions, so
+    the database is read once per click. If an open event is past its close time,
+    it is closed and saved first (rare), and the data is read again.
+    """
+    _require_aware(now, "now")
+    state = _load(path)
+    if _close_expired(state, now):
+        refresh(now, path)
+        state = _load(path)
+    user = _get_user(state, user_id)
+    return PageData(
+        user=user,
+        group=state.groups.get(user.group_id) if user.group_id else None,
+        events=_feed(state, user),
+        my_bets=_bet_history(state, user),
+        leaderboard=_leaderboard(state, user),
+    )
+
+
+def get_group(user_id: str, path=None) -> Optional[Group]:
+    """Return the user's own group (name, invite code), or None if they have none."""
+    state = _load(path)
+    user = _get_user(state, user_id)
+    if not user.group_id:
+        return None
+    return state.groups.get(user.group_id)
 
 
 def create_event(
@@ -256,19 +403,7 @@ def feed(user_id: str, now: datetime, path=None) -> List[EventSummary]:
     """
     refresh(now, path)
     state = _load(path)
-    user = _get_user(state, user_id)
-    events = [
-        e for e in betting.visible_events(user, list(state.events.values()))
-        if e.status != STATUS_DELETED
-    ]
-    open_events = sorted(
-        (e for e in events if e.status == STATUS_OPEN), key=lambda e: e.close_time
-    )
-    other_events = sorted(
-        (e for e in events if e.status != STATUS_OPEN),
-        key=lambda e: e.close_time, reverse=True,
-    )
-    return [_summarize(state, e, user) for e in open_events + other_events]
+    return _feed(state, _get_user(state, user_id))
 
 
 def event_details(user_id: str, event_id: str, now: datetime, path=None) -> EventSummary:
@@ -324,18 +459,7 @@ def resolve_event(
 def bet_history(user_id: str, path=None) -> List[BetRecord]:
     """Return the user's bets with each event's title and result, newest event first."""
     state = _load(path)
-    user = _get_user(state, user_id)
-    records = []
-    for bet in state.bets:
-        if bet.user_id != user.id:
-            continue
-        event = state.events[bet.event_id]
-        records.append(BetRecord(
-            bet=bet, event_title=event.title,
-            event_status=event.status, outcome=event.outcome,
-        ))
-    records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
-    return records
+    return _bet_history(state, _get_user(state, user_id))
 
 
 def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
@@ -344,15 +468,4 @@ def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
     Members with the same balance share a rank and are listed by username.
     """
     state = _load(path)
-    user = _get_user(state, user_id)
-    if not user.group_id:
-        return []
-    members = [u for u in state.users.values() if u.group_id == user.group_id]
-    members.sort(key=lambda u: (-u.balance, u.username.casefold()))
-    rows, rank, previous = [], 0, None
-    for position, member in enumerate(members, start=1):
-        if member.balance != previous:
-            rank, previous = position, member.balance
-        rows.append(LeaderboardRow(rank=rank, username=member.username,
-                                   balance=member.balance))
-    return rows
+    return _leaderboard(state, _get_user(state, user_id))

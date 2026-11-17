@@ -22,4 +22,6 @@ Set-up (once, by one team member):
 3. On Streamlit Community Cloud, open the app's **Settings > Secrets** and add `DATABASE_URL = "postgresql://..."`.
 4. For local testing against Supabase, put the same line into `.streamlit/secrets.toml`, which is git-ignored. Never commit it or paste it into chats.
 
+Careful: with `DATABASE_URL` in your local `.streamlit/secrets.toml`, `streamlit run app.py` uses the real database, because Streamlit copies secrets into the environment. To work on a local file instead, start the app with `DATA_FILE=data/data.json streamlit run app.py` (a set `DATA_FILE` always wins), or keep `DATABASE_URL` out of your local secrets file.
+
 The tables are created automatically on the first start. See `.env.example` for the variable names.
