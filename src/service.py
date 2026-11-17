@@ -12,7 +12,7 @@ auth.py. Not here yet: moderation (flags and polls).
 """
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -37,6 +37,7 @@ from src.models import (
     STATUS_CLOSED,
     STATUS_DELETED,
     STATUS_OPEN,
+    STATUS_PAUSED,
     Bet,
     Event,
     Group,
@@ -51,8 +52,21 @@ MAX_DESCRIPTION_LENGTH = 500
 # --- results returned to the UI ---------------------------------------------
 
 @dataclass
+class Bettor:
+    """One member's total stake on one side of an event (all their bets added up)."""
+
+    username: str
+    side: str
+    stake: Decimal
+
+
+@dataclass
 class EventSummary:
-    """An event with the numbers the feed shows."""
+    """An event with the numbers the feed shows.
+
+    creator_name and bettors are read-only extras for the feed: who created the
+    event and who backed which side (largest stake first).
+    """
 
     event: Event
     pool: Decimal
@@ -61,6 +75,8 @@ class EventSummary:
     odds_yes: Optional[float]
     odds_no: Optional[float]
     my_stake: Decimal
+    creator_name: str = ""
+    bettors: List[Bettor] = field(default_factory=list)
 
 
 @dataclass
@@ -75,11 +91,17 @@ class BetRecord:
 
 @dataclass
 class LeaderboardRow:
-    """One member's place on the leaderboard."""
+    """One member's place on the leaderboard.
+
+    open_bets counts the member's bets that are not settled yet (event open,
+    paused or waiting for its result).
+    """
 
     rank: int
     username: str
     balance: Decimal
+    is_admin: bool = False
+    open_bets: int = 0
 
 
 # --- loading and saving -------------------------------------------------------
@@ -175,6 +197,26 @@ def _close_expired(state: _State, now: datetime) -> int:
     return closed
 
 
+def _username(state: _State, user_id: str) -> str:
+    """Return a user's name, or a placeholder if the account no longer exists."""
+    user = state.users.get(user_id)
+    return user.username if user else "Unknown"
+
+
+def _bettors(state: _State, bets: List[Bet]) -> List[Bettor]:
+    """Add up each member's stake per side; largest stake first, then by name."""
+    totals: Dict[tuple, Decimal] = {}
+    for bet in bets:
+        key = (bet.user_id, bet.side)
+        totals[key] = totals.get(key, Decimal("0")) + bet.stake
+    bettors = [
+        Bettor(username=_username(state, user_id), side=side, stake=stake)
+        for (user_id, side), stake in totals.items()
+    ]
+    bettors.sort(key=lambda b: (-b.stake, b.username.casefold()))
+    return bettors
+
+
 def _summarize(state: _State, event: Event, user: User) -> EventSummary:
     """Return the feed numbers for one event."""
     bets = _bets_on(state, event.id)
@@ -188,6 +230,8 @@ def _summarize(state: _State, event: Event, user: User) -> EventSummary:
         odds_yes=betting.odds(bets, SIDE_YES),
         odds_no=betting.odds(bets, SIDE_NO),
         my_stake=my_stake,
+        creator_name=_username(state, event.creator_id),
+        bettors=_bettors(state, bets),
     )
 
 
@@ -228,13 +272,28 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
         return []
     members = [u for u in state.users.values() if u.group_id == user.group_id]
     members.sort(key=lambda u: (-u.balance, u.username.casefold()))
+    open_bets = _open_bet_counts(state)
     rows, rank, previous = [], 0, None
     for position, member in enumerate(members, start=1):
         if member.balance != previous:
             rank, previous = position, member.balance
-        rows.append(LeaderboardRow(rank=rank, username=member.username,
-                                   balance=member.balance))
+        rows.append(LeaderboardRow(
+            rank=rank, username=member.username, balance=member.balance,
+            is_admin=auth.is_group_admin(member, user.group_id),
+            open_bets=open_bets.get(member.id, 0),
+        ))
     return rows
+
+
+def _open_bet_counts(state: _State) -> Dict[str, int]:
+    """Count each user's bets that are not settled yet (open, paused or closed event)."""
+    unsettled = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
+    counts: Dict[str, int] = {}
+    for bet in state.bets:
+        event = state.events.get(bet.event_id)
+        if event is not None and event.status in unsettled and bet.payout is None:
+            counts[bet.user_id] = counts.get(bet.user_id, 0) + 1
+    return counts
 
 
 # --- public functions -------------------------------------------------------
