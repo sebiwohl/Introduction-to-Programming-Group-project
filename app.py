@@ -15,7 +15,7 @@ from src import service, storage
 from src.betting import BettingError
 from src.service import PageData
 from src.ui import account, events, pages, style
-from src.ui.actions import show_flash
+from src.ui.actions import show_flash, timed
 
 
 def use_secret_database_url() -> None:
@@ -55,7 +55,8 @@ def load_page(now: datetime) -> Optional[PageData]:
     if not user_id:
         return None
     try:
-        return service.page_data(user_id, now)
+        with timed("load page data"):
+            return service.page_data(user_id, now)
     except BettingError:
         st.session_state.pop(account.USER_KEY, None)
         return None
@@ -95,4 +96,5 @@ def main() -> None:
         st.error(f"The app's data could not be loaded or saved: {error}")
 
 
-main()
+with timed("whole page run"):
+    main()
