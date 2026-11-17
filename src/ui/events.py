@@ -61,22 +61,33 @@ def _odds_label(side: str, odds) -> str:
 
 
 def _bet_row(user: User, summary: EventSummary, now: datetime) -> None:
-    """Draw the stake field and the two buttons that place a bet."""
+    """Draw the stake field and the two buttons that place a bet.
+
+    They sit in a form, so changing the stake does not rerun the page (and reload
+    the data); only pressing Yes or No does. Enter does not submit, so it cannot
+    pick a side by accident.
+    """
     event = summary.event
-    stake_col, yes_col, no_col = st.columns([1, 1.3, 1.3])
-    stake = stake_col.number_input(
-        "Stake", min_value=0.0, value=10.0, step=10.0, format="%.2f",
-        key=f"stake_{event.id}", label_visibility="collapsed",
-    )
-    choices = ((yes_col, SIDE_YES, summary.odds_yes), (no_col, SIDE_NO, summary.odds_no))
-    for column, side, odds in choices:
-        if column.button(_odds_label(side, odds), key=f"{side}_{event.id}", width="stretch"):
-            amount = Decimal(f"{stake:.2f}")
-            attempt(
-                lambda: service.place_bet(user.id, event.id, side, amount, now),
-                f"Bet placed: {style.money(amount)} on {SIDE_LABEL[side]}.",
+    with st.form(f"bet_{event.id}", border=False, enter_to_submit=False):
+        stake_col, yes_col, no_col = st.columns([1, 1.3, 1.3])
+        stake = stake_col.number_input(
+            "Stake", min_value=0.0, value=10.0, step=10.0, format="%.2f",
+            key=f"stake_{event.id}", label_visibility="collapsed",
+        )
+        choices = ((yes_col, SIDE_YES, summary.odds_yes), (no_col, SIDE_NO, summary.odds_no))
+        pressed = [
+            side for column, side, odds in choices
+            if column.form_submit_button(
+                _odds_label(side, odds), key=f"{side}_{event.id}", width="stretch"
             )
-            st.rerun()
+        ]
+    for side in pressed:
+        amount = Decimal(f"{stake:.2f}")
+        attempt(
+            lambda: service.place_bet(user.id, event.id, side, amount, now),
+            f"Bet placed: {style.money(amount)} on {SIDE_LABEL[side]}.",
+        )
+        st.rerun()
 
 
 def _resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
