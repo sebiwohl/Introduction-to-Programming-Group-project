@@ -11,10 +11,10 @@ from typing import Optional
 
 import streamlit as st
 
-from src import service, storage
+from src import service, stats, storage
 from src.betting import BettingError
 from src.service import PageData
-from src.ui import account, events, pages, style
+from src.ui import account, events, group, leaderboard, my_bets, nav, style
 from src.ui.actions import show_flash, timed
 
 
@@ -63,18 +63,22 @@ def load_page(now: datetime) -> Optional[PageData]:
 
 
 def show_app(page: PageData, now: datetime) -> None:
-    """Draw the sidebar and the page the user picked."""
+    """Draw the top bar and the page the user picked."""
     if page.group is None:
         account.group_page(page.user)
         return
-    choice = pages.sidebar(page.user, page.group)
+    member = stats.member_stats(page.events)
+    me = member.get(page.user.username, stats.MemberStats())
+    choice = nav.top_bar(page, me, lambda: events.new_event_dialog(page.user, now))
     show_flash()
-    if choice == "Balances":
-        pages.balances_page(page)
-    elif choice == "Profile":
-        pages.profile_page(page.user, page.group)
+    if choice == nav.MY_BETS:
+        my_bets.my_bets_page(page, me)
+    elif choice == nav.LEADERBOARD:
+        leaderboard.leaderboard_page(page, member)
+    elif choice == nav.GROUP:
+        group.group_page(page)
     else:
-        events.events_page(page, now)
+        events.events_page(page, me, now)
 
 
 def main() -> None:

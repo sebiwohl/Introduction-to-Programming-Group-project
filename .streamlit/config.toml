@@ -1,8 +1,11 @@
-# Theme A, "clean light". Change colours and font here; no code needs to change.
+# "Called it!" look: white, black type, blue for YES, orange-red for NO.
+# Change colours and font here; the matching CSS colours are at the top of src/ui/style.py.
 [theme]
 base = "light"
-primaryColor = "#3B6D11"
-backgroundColor = "#F1EFE8"
-secondaryBackgroundColor = "#E7E5DC"
-textColor = "#2C2C2A"
-font = "sans serif"
+primaryColor = "#0A0A0A"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F4F4F6"
+textColor = "#111111"
+borderColor = "#E6E6EB"
+baseRadius = "12px"
+font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"

@@ -6,6 +6,7 @@ import streamlit as st
 
 from src import auth
 from src.models import User
+from src.ui import style
 from src.ui.actions import attempt, show_flash
 
 USER_KEY = "user_id"
@@ -14,6 +15,12 @@ USER_KEY = "user_id"
 def _remember(user: User) -> None:
     """Keep only the user's id in the session; everything else is loaded fresh."""
     st.session_state[USER_KEY] = user.id
+
+
+def log_out() -> None:
+    """Forget the logged-in user and show the log-in page."""
+    st.session_state.pop(USER_KEY, None)
+    st.rerun()
 
 
 def _login_form() -> None:
@@ -44,10 +51,14 @@ def _signup_form() -> None:
 
 def login_page() -> None:
     """Draw the page for visitors who are not logged in."""
-    _, middle, _ = st.columns([1, 2, 1])
+    _, middle, _ = st.columns([1, 1.6, 1])
     with middle:
-        st.title("Called it!")
-        st.caption("Bet virtual coins with your friends. The group sets the odds.")
+        style.show(
+            f'<div style="margin:56px 0 6px">{style.logo(40)}</div>'
+            '<div class="ci-h1" style="font-size:2.4rem">Bet on your friends.</div>'
+            '<div class="ci-muted" style="margin-bottom:18px">Virtual coins, no bookmaker: '
+            "the group sets the odds.</div>"
+        )
         show_flash()
         login_tab, signup_tab = st.tabs(["Log in", "Sign up"])
         with login_tab:
@@ -85,8 +96,12 @@ def _join_group_form(user: User) -> None:
 
 def group_page(user: User) -> None:
     """Draw the page for a logged-in user who has no group yet."""
-    st.title(f"Welcome, {user.username}")
-    st.caption("Create a group and invite friends, or join one with an invite code.")
+    style.show(
+        f'<div style="margin:24px 0 4px">{style.logo()}</div>'
+        + style.heading(f"Welcome, {user.username}",
+                        "Create a group and invite friends, or join one with an invite code")
+    )
+    st.write("")
     show_flash()
     left, right = st.columns(2, gap="large")
     with left:
@@ -94,5 +109,4 @@ def group_page(user: User) -> None:
     with right:
         _join_group_form(user)
     if st.button("Log out"):
-        st.session_state.pop(USER_KEY, None)
-        st.rerun()
+        log_out()
