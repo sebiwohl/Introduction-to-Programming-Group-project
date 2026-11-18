@@ -6,6 +6,7 @@ from typing import Dict, List
 import streamlit as st
 
 from src import stats
+from src.models import SIDES
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import style
@@ -76,7 +77,7 @@ def _status_cell(record: BetRecord, result: str, summary) -> str:
     if result == stats.WON:
         note = f"Paid out {style.money(record.bet.payout)}"
     elif result == stats.LOST:
-        note = f"{(record.outcome or '').upper()} won"
+        note = f"{record.winner_label or (record.outcome or '').upper()} won"
     elif result == stats.REFUNDED:
         note = "Stake returned"
     elif result == stats.AWAITING and summary is not None:
@@ -96,7 +97,21 @@ def _coins_cell(record: BetRecord, result: str, summary) -> str:
     profit = stats.estimated_profit(bet.stake, summary, bet.side) if summary else None
     if profit is None:
         return '<span class="ci-muted">—</span>'
-    return f'<span class="ci-muted">≈ {style.signed(profit)} if {bet.side.upper()}</span>'
+    up_to = "up to " if summary.event.multi_winner else ""
+    return (f'<span class="ci-muted">≈ {up_to}{style.signed(profit)} if '
+            f'{style.esc(_label(record))}</span>')
+
+
+def _label(record: BetRecord) -> str:
+    """Return how the bet's side is shown: YES, NO or the option's name."""
+    return record.side_label or record.bet.side.upper()
+
+
+def _call_tag(record: BetRecord) -> str:
+    """Return the side tag: blue YES or orange-red NO, or the option's name in bold."""
+    if record.bet.side in SIDES:
+        return style.side_tag(record.bet.side)
+    return f"<b>{style.esc(_label(record))}</b>"
 
 
 def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> str:
@@ -111,7 +126,7 @@ def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> 
         rows.append(
             f"<tr{warm}><td><div class='ci-t-title'>{style.esc(record.event_title)}</div>"
             f'<div class="ci-muted" style="font-size:.75rem">{_when_line(record, summary)}</div></td>'
-            f"<td>{style.side_tag(record.bet.side)}&nbsp; <b>{style.money(record.bet.stake)}</b></td>"
+            f"<td>{_call_tag(record)}&nbsp; <b>{style.money(record.bet.stake)}</b></td>"
             f"<td><b>{style.odds_text(odds)}</b></td>"
             f"<td>{_status_cell(record, result, summary)}</td>"
             f'<td class="ci-num">{_coins_cell(record, result, summary)}</td></tr>'
