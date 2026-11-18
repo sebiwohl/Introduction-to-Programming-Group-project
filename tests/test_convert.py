@@ -8,6 +8,16 @@ import pytest
 
 from src.convert import (
     ConversionError,
+    membership_from_dict,
+    membership_to_dict,
+    notification_from_dict,
+    notification_to_dict,
+    number_to_text,
+    repayment_from_dict,
+    repayment_to_dict,
+    text_to_number,
+    topup_from_dict,
+    topup_to_dict,
     bet_from_dict,
     bet_to_dict,
     cents_to_money,
@@ -15,6 +25,7 @@ from src.convert import (
     event_to_dict,
     group_from_dict,
     group_to_dict,
+    membership_dicts,
     money_to_cents,
     poll_from_dict,
     poll_to_dict,
@@ -23,7 +34,9 @@ from src.convert import (
     user_from_dict,
     user_to_dict,
 )
-from src.models import Bet, Event, Group, Poll, User
+from src.models import (
+    Bet, Event, Group, Membership, Notification, Poll, Repayment, TopUp, User,
+)
 
 CLOSE = datetime(2026, 11, 20, 19, 0, tzinfo=timezone.utc)
 
@@ -113,7 +126,8 @@ def test_text_to_time_rejects_missing_offset_or_bad_text(text):
 
 def test_records_round_trip():
     users, group, event, bets, poll = sample_records()
-    assert [user_from_dict(user_to_dict(u)) for u in users] == users
+    memberships = membership_dicts(users)  # group, role and balance are stored here
+    assert [user_from_dict(user_to_dict(u), m) for u, m in zip(users, memberships)] == users
     assert group_from_dict(group_to_dict(group)) == group
     assert event_from_dict(event_to_dict(event)) == event
     assert [bet_from_dict(bet_to_dict(b)) for b in bets] == bets
@@ -122,7 +136,7 @@ def test_records_round_trip():
 
 def test_stored_dicts_use_cents_and_iso_times():
     users, group, event, bets, poll = sample_records()
-    assert user_to_dict(users[0])["balance"] == 98750
+    assert membership_dicts(users)[0]["balance"] == 98750
     assert group_to_dict(group)["start_balance"] == 100000
     assert bet_to_dict(bets[1])["stake"] == 1250
     assert bet_to_dict(bets[1])["payout"] == 2500
@@ -167,3 +181,53 @@ def test_converted_records_pass_storage_validation():
     data["bets"] = [bet_to_dict(b) for b in bets]
     data["polls"] = [poll_to_dict(poll)]
     storage.validate(data)  # raises if anything does not match storage's rules
+
+
+# --- schema version 2 records -------------------------------------------------
+
+def test_new_records_round_trip():
+    membership = Membership(id="m1", user_id="u1", group_id="g1", role="admin",
+                            balance=Decimal("12.50"), restricted=True)
+    topup = TopUp(id="t1", group_id="g1", amount=Decimal("500"), created_by="u1",
+                  created_at=CLOSE)
+    repayment = Repayment(id="r1", group_id="g1", created_by="u1", created_at=CLOSE)
+    note = Notification(id="n1", user_id="u2", group_id="g1", text="Top-up needed",
+                        created_at=CLOSE)
+    assert membership_from_dict(membership_to_dict(membership)) == membership
+    assert topup_from_dict(topup_to_dict(topup)) == topup
+    assert repayment_from_dict(repayment_to_dict(repayment)) == repayment
+    assert notification_from_dict(notification_to_dict(note)) == note
+    assert membership_to_dict(membership)["balance"] == 1250
+    assert topup_to_dict(topup)["amount"] == 50000
+
+
+def test_over_under_event_round_trips_with_line_as_text():
+    event = Event(id="e1", group_id="g1", creator_id="u1", title="Goals", close_time=CLOSE,
+                  event_type="over_under", line=Decimal("2.5"),
+                  event_time=CLOSE + timedelta(hours=2), result_value=Decimal("3"))
+    stored = event_to_dict(event)
+    assert (stored["line"], stored["result_value"]) == ("2.5", "3")
+    assert event_from_dict(stored) == event
+
+
+def test_event_without_date_uses_close_time():
+    event = Event(id="e1", group_id="g1", creator_id="u1", title="Rain", close_time=CLOSE)
+    assert event.event_time == CLOSE
+    assert event_to_dict(event)["event_time"] == "2026-11-20T19:00:00+00:00"
+
+
+def test_user_without_membership_has_no_group():
+    user = user_from_dict({"id": "u1", "username": "Anna", "password_hash": "h"})
+    assert (user.group_id, user.role, user.balance) == (None, "member", Decimal("0"))
+
+
+@pytest.mark.parametrize("number", [2.5, True, "2.5", None, Decimal("NaN")])
+def test_number_to_text_rejects_unsafe_values(number):
+    with pytest.raises(ConversionError):
+        number_to_text(number)
+
+
+@pytest.mark.parametrize("text", ["two", "", None, 2.5, "Infinity"])
+def test_text_to_number_rejects_non_numbers(text):
+    with pytest.raises(ConversionError):
+        text_to_number(text)

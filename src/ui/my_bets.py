@@ -6,7 +6,7 @@ from typing import Dict, List
 import streamlit as st
 
 from src import stats
-from src.models import KIND_NAMES
+from src.models import TYPE_NAMES
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import style
@@ -109,7 +109,7 @@ def _label(record: BetRecord) -> str:
 
 def _call_tag(record: BetRecord) -> str:
     """Return the side tag: blue YES or orange-red NO, or the option's name in bold."""
-    if record.kind != KIND_NAMES:
+    if record.event_type != TYPE_NAMES:
         return style.side_tag(record.bet.side)
     return f"<b>{style.esc(_label(record))}</b>"
 

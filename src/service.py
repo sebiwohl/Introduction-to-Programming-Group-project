@@ -24,16 +24,18 @@ from src.convert import (
     bet_to_dict,
     event_from_dict,
     event_to_dict,
+    find_membership,
     group_from_dict,
     group_to_dict,
     poll_from_dict,
     poll_to_dict,
     user_from_dict,
     user_to_dict,
+    money_to_cents,
 )
 from src.models import (
-    KIND_NAMES,
-    KIND_YES_NO,
+    TYPE_NAMES,
+    TYPE_YES_NO,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
@@ -108,8 +110,8 @@ class EventSummary:
 class BetRecord:
     """One past or open bet of a user, with its event's title and result.
 
-    kind is the event's type; side_label is how the bet's side is shown (YES,
-    NO or an option's name); winner_label names the result once resolved
+    event_type is the event's type; side_label is how the bet's side is shown
+    (YES, NO or an option's name); winner_label names the result once resolved
     ('YES', or 'Marta and João').
     """
 
@@ -119,7 +121,7 @@ class BetRecord:
     outcome: Optional[str]
     side_label: str = ""
     winner_label: str = ""
-    kind: str = KIND_YES_NO
+    event_type: str = TYPE_YES_NO
 
 
 @dataclass
@@ -151,9 +153,14 @@ class _State:
 
 
 def _unpack(data: dict) -> _State:
-    """Convert the stored dicts into dataclasses."""
+    """Convert the stored dicts into dataclasses.
+
+    Each user gets the group, role and balance of their membership.
+    """
+    memberships = data["memberships"]
     return _State(
-        users={u["id"]: user_from_dict(u) for u in data["users"]},
+        users={u["id"]: user_from_dict(u, find_membership(memberships, u["id"]))
+               for u in data["users"]},
         groups={g["id"]: group_from_dict(g) for g in data["groups"]},
         events={e["id"]: event_from_dict(e) for e in data["events"]},
         bets=[bet_from_dict(b) for b in data["bets"]],
@@ -161,9 +168,19 @@ def _unpack(data: dict) -> _State:
     )
 
 
+def _pack_balances(state: _State, data: dict) -> None:
+    """Write each user's role and balance back into their stored membership."""
+    for user in state.users.values():
+        membership = find_membership(data["memberships"], user.id)
+        if membership is not None and membership["group_id"] == user.group_id:
+            membership["role"] = user.role
+            membership["balance"] = money_to_cents(user.balance)
+
+
 def _pack(state: _State, data: dict) -> None:
     """Write the dataclasses back into the stored dicts (in place)."""
     data["users"] = [user_to_dict(u) for u in state.users.values()]
+    _pack_balances(state, data)
     data["groups"] = [group_to_dict(g) for g in state.groups.values()]
     data["events"] = [event_to_dict(e) for e in state.events.values()]
     data["bets"] = [bet_to_dict(b) for b in state.bets]
@@ -328,7 +345,7 @@ def _bet_history(state: _State, user: User) -> List[BetRecord]:
             bet=bet, event_title=event.title,
             event_status=event.status, outcome=event.outcome,
             side_label=betting.side_label(event, bet.side),
-            winner_label=winners[event.id], kind=event.kind,
+            winner_label=winners[event.id], event_type=event.event_type,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
@@ -477,7 +494,7 @@ def create_event(
         raise BettingError("Several winners are only possible on a names event.")
     names = {}
     if options is not None:
-        names = {"kind": KIND_NAMES, "options": betting.make_options(options),
+        names = {"event_type": TYPE_NAMES, "options": betting.make_options(options),
                  "multi_winner": multi_winner}
     with storage.transaction(path) as data:
         state = _unpack(data)
@@ -485,7 +502,8 @@ def create_event(
         auth.require_permission(user, auth.CREATE_EVENT)
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
-            title=title, description=description, close_time=close_time, **names,
+            title=title, description=description, close_time=close_time,
+            event_time=close_time, **names,
         )
         state.events[event.id] = event
         _pack(state, data)

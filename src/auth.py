@@ -17,8 +17,11 @@ from typing import Optional
 
 from src import storage
 from src.betting import BettingError, can_access_event
-from src.convert import group_from_dict, group_to_dict, money_to_cents, user_from_dict, user_to_dict
-from src.models import CENT, ROLE_ADMIN, ROLE_MEMBER, Event, Group, User
+from src.convert import (
+    find_membership, group_from_dict, group_to_dict, membership_to_dict, user_from_dict,
+    user_to_dict,
+)
+from src.models import CENT, ROLE_ADMIN, ROLE_MEMBER, Event, Group, Membership, User
 
 # Password hashing. The iteration count is stored inside each hash, so it can be
 # raised later without breaking existing accounts.
@@ -157,13 +160,25 @@ def log_in(username: str, password: str, path=None) -> User:
     for stored in data["users"]:
         if _same_username(stored["username"], username):
             if verify_password(password, stored["password_hash"]):
-                return user_from_dict(stored)
+                return user_from_dict(stored, find_membership(data["memberships"], stored["id"]))
             raise AuthError(LOGIN_FAILED)
     _waste_time_like_a_login(password)
     raise AuthError(LOGIN_FAILED)
 
 
 # --- groups -------------------------------------------------------------------
+
+def _add_membership(data: dict, user_id: str, group_id: str, role: str, balance: Decimal) -> None:
+    """Store a new membership for the user, unless they are already in a group.
+
+    Version 1 rule, kept until several groups per user are built: one group only.
+    """
+    if find_membership(data["memberships"], user_id) is not None:
+        raise AuthError("You are already in a group.")
+    membership = Membership(id=uuid.uuid4().hex, user_id=user_id, group_id=group_id,
+                            role=role, balance=balance)
+    data["memberships"].append(membership_to_dict(membership))
+
 
 def _new_invite_code(data: dict) -> str:
     """Return a random invite code that no group uses yet."""
@@ -197,15 +212,11 @@ def create_group(
         raise AuthError("Start balance must be positive, with at most 2 decimals.")
     start_balance = start_balance.quantize(CENT)
     with storage.transaction(path) as data:
-        user = _find_user(data, user_id)
-        if user["group_id"]:
-            raise AuthError("You are already in a group.")
+        _find_user(data, user_id)
         group = Group(id=uuid.uuid4().hex, name=name, admin_id=user_id,
                       invite_code=_new_invite_code(data), start_balance=start_balance)
+        _add_membership(data, user_id, group.id, ROLE_ADMIN, start_balance)
         data["groups"].append(group_to_dict(group))
-        user["group_id"] = group.id
-        user["role"] = ROLE_ADMIN
-        user["balance"] = money_to_cents(start_balance)
     return group
 
 
@@ -217,16 +228,15 @@ def join_group(user_id: str, invite_code: str, path=None) -> Group:
     """
     code = invite_code.strip().upper() if isinstance(invite_code, str) else ""
     with storage.transaction(path) as data:
-        user = _find_user(data, user_id)
-        if user["group_id"]:
+        _find_user(data, user_id)
+        if find_membership(data["memberships"], user_id) is not None:
             raise AuthError("You are already in a group.")
         group = next((g for g in data["groups"] if g["invite_code"] == code), None)
         if group is None:
             raise AuthError("No group has that invite code.")
-        user["group_id"] = group["id"]
-        user["role"] = ROLE_MEMBER
-        user["balance"] = group["start_balance"]  # both stored as cents
-    return group_from_dict(group)
+        joined = group_from_dict(group)
+        _add_membership(data, user_id, joined.id, ROLE_MEMBER, joined.start_balance)
+    return joined
 
 
 # --- permissions --------------------------------------------------------------

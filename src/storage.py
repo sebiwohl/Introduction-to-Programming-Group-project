@@ -11,6 +11,9 @@ Two places can hold the data, with the same format and the same rules:
   is one JSON row in ``app_data``; backups are rows in ``app_data_backups``.
   Needed on hosts that erase local files on restart (Streamlit Community Cloud).
 
+Data saved in an older format (``schema_version`` 1) is upgraded on loading by
+``src/migration.py`` and written in the current format at the next save.
+
 An explicit ``path`` argument always means the file, so tests never touch the
 database by accident. No Streamlit; psycopg is imported only in database mode.
 """
@@ -26,14 +29,19 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 from pathlib import Path
 import tempfile
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from src.models import KIND_NAMES, KIND_YES_NO, MAX_OPTION_LENGTH, MAX_OPTIONS, MIN_OPTIONS
+from src.migration import upgrade
+from src.models import EVENT_TYPES, MAX_OPTION_LENGTH, MAX_OPTIONS, MIN_OPTIONS, TYPE_NAMES
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 MAX_BACKUPS = 20
 DEFAULT_DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "data.json"
-SECTIONS = ("users", "groups", "events", "bets", "polls")
+SECTIONS = (
+    "users", "memberships", "groups", "events", "bets", "polls",
+    "topups", "repayments", "notifications",
+)
 
 # On Windows, os.replace fails with PermissionError while another thread or process
 # (or a virus scanner) has the target open, so the replace is retried briefly there.
@@ -88,6 +96,21 @@ def _is_int_min(minimum: int, value: Any, ids: dict[str, set[str]]) -> bool:
     return type(value) is int and value >= minimum
 
 
+def _is_bool(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for True or False (not 0 or 1)."""
+    return isinstance(value, bool)
+
+
+def _is_decimal_text(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for text holding a finite decimal number, such as '2.5'."""
+    if not isinstance(value, str):
+        return False
+    try:
+        return Decimal(value).is_finite()
+    except InvalidOperation:
+        return False
+
+
 def _is_choice(options: tuple[str, ...], value: Any, ids: dict[str, set[str]]) -> bool:
     """Return True if the value is a string equal to one of ``options``."""
     return isinstance(value, str) and value in options
@@ -125,11 +148,6 @@ def _is_opener(value: Any, ids: dict[str, set[str]]) -> bool:
 def _or_null(predicate: Predicate, value: Any, ids: dict[str, set[str]]) -> bool:
     """Return True for None or for a value the predicate accepts."""
     return value is None or predicate(value, ids)
-
-
-def _is_bool(value: Any, ids: dict[str, set[str]]) -> bool:
-    """Return True for True or False (not 0 or 1)."""
-    return type(value) is bool
 
 
 def _is_text_list(value: Any, ids: dict[str, set[str]]) -> bool:
@@ -176,9 +194,14 @@ RULES: dict[str, dict[str, Rule]] = {
         "id": (_is_text, "a non-empty string"),
         "username": (_is_text, "a non-empty string"),
         "password_hash": (_is_text, "a non-empty string"),
-        "group_id": (_nullable(partial(_is_ref, "groups")), "an existing group id or null"),
+    },
+    "memberships": {
+        "id": (_is_text, "a non-empty string"),
+        "user_id": (partial(_is_ref, "users"), "an existing user id"),
+        "group_id": (partial(_is_ref, "groups"), "an existing group id"),
         "role": (partial(_is_choice, ("member", "admin")), "member or admin"),
         "balance": (partial(_is_int_min, 0), "a whole number >= 0"),
+        "restricted": (_is_bool, "true or false"),
     },
     "groups": {
         "id": (_is_text, "a non-empty string"),
@@ -200,6 +223,10 @@ RULES: dict[str, dict[str, Rule]] = {
         ),
         "outcome": (_nullable(partial(_is_choice, ("yes", "no"))), "yes, no or null"),
         "flags": (partial(_is_ref_list, "users"), "a list of unique existing user ids"),
+        "type": (partial(_is_choice, EVENT_TYPES), ", ".join(EVENT_TYPES[:-1]) + f" or {EVENT_TYPES[-1]}"),
+        "line": (_nullable(_is_decimal_text), "a decimal number as text, or null"),
+        "event_time": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
+        "result_value": (_nullable(_is_decimal_text), "a decimal number as text, or null"),
     },
     "bets": {
         "id": (_is_text, "a non-empty string"),
@@ -217,14 +244,34 @@ RULES: dict[str, dict[str, Rule]] = {
         "votes": (_is_votes, "a mapping of existing user ids to delete or keep"),
         "result": (_nullable(partial(_is_choice, ("deleted", "kept"))), "deleted, kept or null"),
     },
+    "topups": {
+        "id": (_is_text, "a non-empty string"),
+        "group_id": (partial(_is_ref, "groups"), "an existing group id"),
+        "amount": (partial(_is_int_min, 1), "a whole number > 0"),
+        "created_by": (partial(_is_ref, "users"), "an existing user id"),
+        "created_at": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
+    },
+    "repayments": {
+        "id": (_is_text, "a non-empty string"),
+        "group_id": (partial(_is_ref, "groups"), "an existing group id"),
+        "created_by": (partial(_is_ref, "users"), "an existing user id"),
+        "created_at": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
+    },
+    "notifications": {
+        "id": (_is_text, "a non-empty string"),
+        "user_id": (partial(_is_ref, "users"), "an existing user id"),
+        "group_id": (_nullable(partial(_is_ref, "groups")), "an existing group id or null"),
+        "text": (_is_text, "a non-empty string"),
+        "created_at": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
+        "read": (_is_bool, "true or false"),
+    },
 }
 
 
-# Fields a record may leave out. Only names events have these; a yes/no event
-# is stored without them, exactly as before names events existed.
+# Fields a record may leave out. Only names events have these; other events
+# are stored without them, exactly as before names events existed.
 OPTIONAL_RULES: dict[str, dict[str, Rule]] = {
     "events": {
-        "kind": (partial(_is_choice, (KIND_YES_NO, KIND_NAMES)), f"{KIND_YES_NO} or {KIND_NAMES}"),
         "options": (_is_options, f"{MIN_OPTIONS} to {MAX_OPTIONS} options, each with a unique id "
                     f"and a unique, trimmed name of at most {MAX_OPTION_LENGTH} characters"),
         "multi_winner": (_is_bool, "true or false"),
@@ -326,6 +373,41 @@ def _check_usernames(data: Data) -> None:
         seen[key] = user["id"]
 
 
+def _check_memberships(data: Data) -> None:
+    """Check that a user has at most one membership per group."""
+    seen: dict[tuple[str, str], str] = {}
+    for membership in data["memberships"]:
+        key = (membership["user_id"], membership["group_id"])
+        if key in seen:
+            raise StorageError(
+                f"memberships[{membership['id']}] repeats user {key[0]} in group {key[1]}, "
+                f"already in memberships[{seen[key]}]"
+            )
+        seen[key] = membership["id"]
+
+
+def _check_event_type(event: Data) -> None:
+    """Check the line, the result number and the event date against the event type."""
+    label = f"events[{event['id']}]"
+    over_under = event["type"] == "over_under"
+    if over_under and event["line"] is None:
+        raise StorageError(f"{label}.line must be set for an over_under event, got None")
+    if not over_under and event["line"] is not None:
+        raise StorageError(
+            f"{label}.line must be null for a {event['type']} event, got {event['line']!r}"
+        )
+    if not over_under and event["result_value"] is not None:
+        raise StorageError(
+            f"{label}.result_value must be null for a {event['type']} event, "
+            f"got {event['result_value']!r}"
+        )
+    if datetime.fromisoformat(event["close_time"]) > datetime.fromisoformat(event["event_time"]):
+        raise StorageError(
+            f"{label}.close_time must not be after event_time ({event['event_time']}), "
+            f"got {event['close_time']}"
+        )
+
+
 def _check_outcome(event: Data) -> None:
     """Check that the outcome is set exactly when the event is resolved."""
     label = f"events[{event['id']}]"
@@ -365,8 +447,8 @@ def _check_refunds(event: Data, bets: list[Data]) -> None:
 
 
 def _is_names_event(event: Data) -> bool:
-    """Return True for a stored names event (an event without a kind is yes/no)."""
-    return event.get("kind", KIND_YES_NO) == KIND_NAMES
+    """Return True for a stored names event."""
+    return event["type"] == TYPE_NAMES
 
 
 def _check_names_fields(event: Data) -> None:
@@ -416,6 +498,7 @@ def _check_bet_sides(data: Data) -> None:
 def _check_events(data: Data) -> None:
     """Run the names, side, outcome, payout and refund checks for every event."""
     for event in data["events"]:
+        _check_event_type(event)
         _check_names_fields(event)
     _check_bet_sides(data)
     for event in data["events"]:
@@ -435,6 +518,7 @@ def validate(data: Any) -> None:
         for index, record in enumerate(data[section]):
             _check_record(section, record, index, ids)
     _check_usernames(data)
+    _check_memberships(data)
     _check_events(data)
 
 
@@ -727,6 +811,7 @@ def _db_validated(data: Any) -> Data:
     """Validate data read from the database; None (nothing saved) gives empty_data()."""
     if data is None:
         return empty_data()
+    data = upgrade(data)
     try:
         validate(data)
     except StorageError as error:
@@ -827,6 +912,7 @@ def _db_restore(url: str, only_if_broken: bool) -> tuple[str, str | None] | None
         problems: list[str] = []
         for row_id, saved_at, data in cur.fetchall():
             name = _backup_name(row_id, saved_at)
+            data = upgrade(data)
             try:
                 validate(data)
             except StorageError as error:
@@ -880,6 +966,7 @@ def load_data(path: PathArg = None) -> Data:
         raise StorageError(f"cannot read {file.name}: {error}") from error
     except json.JSONDecodeError as error:
         raise StorageError(f"{file.name} is not valid JSON: {error}") from error
+    data = upgrade(data)
     try:
         validate(data)
     except StorageError as error:

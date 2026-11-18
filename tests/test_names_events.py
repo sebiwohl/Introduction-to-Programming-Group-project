@@ -5,6 +5,7 @@ src/convert.py, the service functions, the stats and the HTML escaping.
 """
 
 import copy
+import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -12,8 +13,10 @@ import pytest
 
 from src import betting, service, stats, storage
 from src.betting import BettingError
-from src.convert import event_from_dict, event_to_dict, group_to_dict, user_to_dict
-from src.models import KIND_NAMES, Bet, Event, Group, Option, User
+from src.convert import (
+    event_from_dict, event_to_dict, group_to_dict, membership_dicts, user_to_dict,
+)
+from src.models import TYPE_NAMES, TYPE_OVER_UNDER, Bet, Event, Group, Option, User
 from src.storage import StorageError
 from src.ui import style
 
@@ -27,7 +30,7 @@ NAMES = ["Tiago", "Marta", "João", "Pedro"]
 def names_event(multi=False, status="open"):
     """Return a names event with four options: o1 Tiago, o2 Marta, o3 João, o4 Pedro."""
     return Event(id="e1", group_id="g1", creator_id="u1", title="Who shows up late?",
-                 close_time=CLOSE, status=status, kind=KIND_NAMES,
+                 close_time=CLOSE, status=status, event_type=TYPE_NAMES,
                  options=betting.make_options(NAMES), multi_winner=multi)
 
 
@@ -259,7 +262,8 @@ def stored_names_event(**changes):
     """Return a stored names event dict (open, one winner) with some fields changed."""
     event = {"id": "e9", "group_id": "g1", "creator_id": "u1", "title": "Who is late?",
              "description": "", "close_time": "2026-11-20T19:00:00+00:00", "status": "open",
-             "outcome": None, "flags": [], "kind": "names",
+             "outcome": None, "flags": [], "type": "names", "line": None,
+             "event_time": "2026-11-20T19:00:00+00:00", "result_value": None,
              "options": [{"id": "o1", "name": "Tiago"}, {"id": "o2", "name": "Marta"}],
              "multi_winner": False, "winners": []}
     event.update(changes)
@@ -269,11 +273,13 @@ def stored_names_event(**changes):
 def stored_data(event, bets=()):
     """Return valid stored data with two users, a group, the event and the bets."""
     data = storage.empty_data()
-    data["users"] = [
-        {"id": "u1", "username": "anna", "password_hash": "h", "group_id": "g1", "role": "admin",
-         "balance": 1000},
-        {"id": "u2", "username": "ben", "password_hash": "h", "group_id": "g1", "role": "member",
-         "balance": 1000},
+    data["users"] = [{"id": "u1", "username": "anna", "password_hash": "h"},
+                     {"id": "u2", "username": "ben", "password_hash": "h"}]
+    data["memberships"] = [
+        {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin", "balance": 1000,
+         "restricted": False},
+        {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member", "balance": 1000,
+         "restricted": False},
     ]
     data["groups"] = [{"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC",
                        "start_balance": 1000}]
@@ -300,23 +306,50 @@ def test_names_event_round_trips_through_the_file(tmp_path):
     storage.save_data(data, path)
     assert storage.load_data(path) == data
     event = event_from_dict(storage.load_data(path)["events"][0])
-    assert event.kind == KIND_NAMES and event.options[1] == Option("o2", "Marta")
+    assert event.event_type == TYPE_NAMES and event.options[1] == Option("o2", "Marta")
     assert event_to_dict(event) == data["events"][0]
 
 
 def test_yes_no_event_is_stored_exactly_as_before():
     event = Event(id="e1", group_id="g1", creator_id="u1", title="Rain", close_time=CLOSE)
     assert set(event_to_dict(event)) == {"id", "group_id", "creator_id", "title", "description",
-                                         "close_time", "status", "outcome", "flags"}
+                                         "close_time", "status", "outcome", "flags", "type",
+                                         "line", "event_time", "result_value"}
 
 
-def test_old_yes_no_event_without_kind_loads_as_yes_no():
-    old = {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Rain", "description": "",
-           "close_time": "2026-11-20T19:00:00+00:00", "status": "resolved", "outcome": "no",
-           "flags": []}
-    event = event_from_dict(old)
-    assert event.kind == "yes_no" and event.options == [] and event.winners == []
-    assert event_to_dict(event) == old
+def test_stored_yes_no_event_without_names_fields_loads_as_yes_no():
+    stored = {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Rain", "description": "",
+              "close_time": "2026-11-20T19:00:00+00:00", "status": "resolved", "outcome": "no",
+              "flags": [], "type": "yes_no", "line": None,
+              "event_time": "2026-11-20T19:00:00+00:00", "result_value": None}
+    event = event_from_dict(stored)
+    assert event.event_type == "yes_no" and event.options == [] and event.winners == []
+    assert event_to_dict(event) == stored
+
+
+def test_old_schema_1_yes_no_event_still_loads_and_resolves_as_before(tmp_path):
+    """Data saved before memberships and names events existed still works the same."""
+    path = tmp_path / "data.json"
+    old = {"schema_version": 1, "polls": [],
+           "users": [{"id": "u1", "username": "anna", "password_hash": "h", "group_id": "g1",
+                      "role": "admin", "balance": 6000},
+                     {"id": "u2", "username": "ben", "password_hash": "h", "group_id": "g1",
+                      "role": "member", "balance": 9000}],
+           "groups": [{"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "A",
+                       "start_balance": 10000}],
+           "events": [{"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Rain",
+                       "description": "", "close_time": "2026-11-20T19:00:00+00:00",
+                       "status": "open", "outcome": None, "flags": []}],
+           "bets": [{"id": "b1", "event_id": "e1", "user_id": "u1", "side": "yes", "stake": 4000,
+                     "payout": None},
+                    {"id": "b2", "event_id": "e1", "user_id": "u2", "side": "no", "stake": 1000,
+                     "payout": None}]}
+    path.write_text(json.dumps(old))
+    assert service.resolve_event("u1", "e1", "no", AFTER, path) == Decimal("50")
+    assert service.get_user("u2", path).balance == Decimal("140")
+    saved = storage.load_data(path)
+    assert saved["schema_version"] == 2 and saved["events"][0]["type"] == "yes_no"
+    assert "options" not in saved["events"][0] and saved["events"][0]["outcome"] == "no"
 
 
 BAD_NAMES_DATA = {
@@ -333,7 +366,9 @@ BAD_NAMES_DATA = {
         options=[{"id": "o1", "name": "x" * 41}, {"id": "o2", "name": "Marta"}]),
     "extra option field": stored_names_event(
         options=[{"id": "o1", "name": "Tiago", "x": 1}, {"id": "o2", "name": "Marta"}]),
-    "unknown kind": stored_names_event(kind="poll"),
+    "unknown type": stored_names_event(type="poll"),
+    "names event with a line": stored_names_event(line="2.5"),
+    "names event with a result number": stored_names_event(result_value="3"),
     "multi_winner not a boolean": stored_names_event(multi_winner=1),
     "winner that is not an option": stored_names_event(status="resolved", winners=["o7"]),
     "resolved without winners": stored_names_event(status="resolved", winners=[]),
@@ -342,7 +377,8 @@ BAD_NAMES_DATA = {
     "outcome on a names event": stored_names_event(status="resolved", winners=["o1"], outcome="yes"),
     "names event without options": {k: v for k, v in stored_names_event().items() if k != "options"},
     "names event without winners": {k: v for k, v in stored_names_event().items() if k != "winners"},
-    "options on a yes/no event": {k: v for k, v in stored_names_event().items() if k != "kind"},
+    "options on a yes/no event": stored_names_event(type="yes_no"),
+    "options on an over/under event": stored_names_event(type="over_under", line="2.5"),
 }
 
 
@@ -362,8 +398,8 @@ def test_bet_on_an_option_the_event_does_not_have_is_rejected_by_storage():
 
 
 def test_option_ids_on_a_yes_no_event_are_rejected_by_storage():
-    yes_no = {k: v for k, v in stored_names_event().items()
-              if k not in ("kind", "options", "multi_winner", "winners")}
+    yes_no = {k: v for k, v in stored_names_event(type="yes_no").items()
+              if k not in ("options", "multi_winner", "winners")}
     with pytest.raises(StorageError, match="side must be yes or no"):
         storage.validate(stored_data(yes_no, [stored_bet("b1", "u1", "o1", 100)]))
 
@@ -395,6 +431,7 @@ def path(tmp_path):
              User(id="u3", username="Cleo", password_hash="h", group_id="g1", balance=Decimal("100"))]
     data = storage.empty_data()
     data["users"] = [user_to_dict(u) for u in users]
+    data["memberships"] = membership_dicts(users)
     data["groups"] = [group_to_dict(Group(id="g1", name="Friends", admin_id="u1", invite_code="A"))]
     data["events"] = [event_to_dict(Event(id="e0", group_id="g1", creator_id="u1",
                                           title="Rain on Saturday", close_time=CLOSE))]
@@ -411,7 +448,8 @@ def create(path, names=NAMES, multi=True, close=CLOSE):
 def test_create_names_event_saves_options_and_mode(path):
     event = create(path, ["Anna", "Ben", " Tiago ", "Marta"])
     saved = next(e for e in storage.load_data(path)["events"] if e["id"] == event.id)
-    assert saved["kind"] == "names" and saved["multi_winner"] is True and saved["winners"] == []
+    assert saved["type"] == "names" and saved["multi_winner"] is True and saved["winners"] == []
+    assert saved["line"] is None and saved["event_time"] == saved["close_time"]
     assert [o["name"] for o in saved["options"]] == ["Anna", "Ben", "Tiago", "Marta"]
 
 
@@ -439,7 +477,7 @@ def test_several_winners_without_names_is_rejected(path):
 def test_create_without_options_is_still_a_yes_no_event(path):
     event = service.create_event("u2", "Will it rain?", CLOSE, NOW, path=path)
     saved = next(e for e in storage.load_data(path)["events"] if e["id"] == event.id)
-    assert "kind" not in saved and event.kind == "yes_no"
+    assert saved["type"] == "yes_no" and "options" not in saved and event.event_type == "yes_no"
 
 
 def test_group_member_names(path):
@@ -469,7 +507,7 @@ def test_full_names_flow_with_two_winners(path):
     assert [o.won for o in done.options] == [False, True, True, False]
     history = service.bet_history("u3", path)
     assert history[0].side_label == "Tiago" and history[0].winner_label == "Marta and João"
-    assert history[0].kind == "names"
+    assert history[0].event_type == "names"
 
 
 def test_yes_no_event_still_resolves_exactly_as_before(path):
@@ -478,7 +516,19 @@ def test_yes_no_event_still_resolves_exactly_as_before(path):
     assert service.resolve_event("u1", "e0", "no", AFTER, path) == Decimal("50")
     assert service.get_user("u2", path).balance == Decimal("140")
     saved = storage.load_data(path)["events"][0]
-    assert saved["outcome"] == "no" and "kind" not in saved and "winners" not in saved
+    assert saved["outcome"] == "no" and saved["type"] == "yes_no" and "winners" not in saved
+
+
+def test_over_under_events_are_not_names_events():
+    event = Event(id="e3", group_id="g1", creator_id="u1", title="Goals", close_time=CLOSE,
+                  event_type=TYPE_OVER_UNDER, line=Decimal("2.5"))
+    assert not betting.is_names_event(event)
+    users = people(100)
+    assert betting.place_bet(users["u1"], event, "yes", Decimal("10"), NOW).side == "yes"
+    with pytest.raises(BettingError):
+        betting.place_bet(users["u1"], event, "o1", Decimal("10"), NOW)
+    with pytest.raises(BettingError):
+        betting.resolve_names_event(event, [], ["o1"], {}, AFTER)
 
 
 def test_names_event_needs_names_resolve(path):

@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Union
 
 from src.models import (
     CENT,
-    KIND_NAMES,
+    TYPE_NAMES,
     MAX_OPTION_LENGTH,
     MAX_OPTIONS,
     MIN_OPTIONS,
@@ -261,7 +261,7 @@ def resolve_event(
 
 def is_names_event(event: Event) -> bool:
     """Return True for an event whose options are names instead of yes and no."""
-    return event.kind == KIND_NAMES
+    return event.event_type == TYPE_NAMES
 
 
 def clean_options(names: List[str]) -> List[str]:
