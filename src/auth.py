@@ -42,6 +42,7 @@ INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 INVITE_LENGTH = 6
 
 LOGIN_FAILED = "Wrong username or password."
+RESTRICTED = "The admin has restricted you in this group: you can only view until they lift it."
 
 # Actions for require_permission(), from the roles table in requirements 2.1.
 VIEW_FEED = "view_feed"
@@ -256,7 +257,7 @@ def user_groups(user_id: str, path=None) -> List[Tuple[Group, Membership]]:
     return sorted(pairs, key=lambda pair: (pair[0].name.casefold(), pair[0].id))
 
 
-def _user_in_group(data: dict, user_id: str, group_id: str) -> User:
+def user_in_group(data: dict, user_id: str, group_id: str) -> User:
     """Return the user with their group, role and balance in this group.
 
     A group the user is not in is reported as not found, so its id reveals nothing.
@@ -276,7 +277,7 @@ def hand_over_admin(
     admin gets a notification.
     """
     with storage.transaction(path) as data:
-        admin = _user_in_group(data, admin_id, group_id)
+        admin = user_in_group(data, admin_id, group_id)
         require_permission(admin, TRANSFER_ADMIN)
         if new_admin_id == admin_id:
             raise AuthError("You are already the admin.")
@@ -303,12 +304,15 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
 
     Every action needs a group. When an event is given, it must be in one of
     the user's groups. Resolving is allowed for the event's creator and the
-    group admin; open_poll, delete_event and manage_members are admin-only.
+    group admin; open_poll, delete_event, manage_members and transfer_admin are
+    admin-only. A restricted member may only view (requirements 2.2).
     """
     if not user.group_id:
         raise AuthError("Join or create a group first.")
     if event is not None and not can_access_event(user, event):
         raise AuthError("Event not found.")
+    if user.restricted and action != VIEW_FEED:
+        raise AuthError(RESTRICTED)
     if action in MEMBER_ACTIONS:
         return
     if action == RESOLVE_EVENT:

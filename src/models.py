@@ -38,8 +38,9 @@ EVENT_TYPES = (TYPE_YES_NO, TYPE_OVER_UNDER)
 class User:
     """A person who can log in and bet. Balance is in coins, 2 decimals.
 
-    group_id, role and balance are not stored on the user: they come from the
-    user's membership (see Membership) and are filled in when data is loaded.
+    group_id, role, balance and restricted are not stored on the user: they
+    come from the user's membership (see Membership) and are filled in when
+    data is loaded.
     """
 
     id: str
@@ -49,6 +50,7 @@ class User:
     role: str = ROLE_MEMBER
     balance: Decimal = Decimal("0")
     avatar: str = ""
+    restricted: bool = False
 
 
 @dataclass
