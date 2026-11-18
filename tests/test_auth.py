@@ -28,8 +28,17 @@ def path(tmp_path):
 
 
 def saved_user(path, user_id):
-    """Return the stored dict of one user."""
-    return next(u for u in storage.load_data(path)["users"] if u["id"] == user_id)
+    """Return the stored dict of one user, with group, role and balance from their membership.
+
+    Since schema version 2 these three live in a membership record; a user
+    without one has no group, the member role and a balance of 0.
+    """
+    data = storage.load_data(path)
+    user = dict(next(u for u in data["users"] if u["id"] == user_id))
+    membership = next((m for m in data["memberships"] if m["user_id"] == user_id), None)
+    user.update({"group_id": None, "role": "member", "balance": 0} if membership is None else
+                {k: membership[k] for k in ("group_id", "role", "balance")})
+    return user
 
 
 # --- passwords ----------------------------------------------------------------

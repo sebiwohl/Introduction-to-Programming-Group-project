@@ -6,7 +6,7 @@ from decimal import Decimal
 import pytest
 
 from src import service, storage
-from src.convert import event_to_dict, group_to_dict, user_to_dict
+from src.convert import event_to_dict, group_to_dict, membership_dicts, user_to_dict
 from src.models import Event, Group, User
 
 UTC = timezone.utc
@@ -46,6 +46,7 @@ def path(tmp_path):
     ]
     data = storage.empty_data()
     data["users"] = [user_to_dict(u) for u in users]
+    data["memberships"] = membership_dicts(users)
     data["groups"] = [group_to_dict(g) for g in groups]
     data["events"] = [event_to_dict(e) for e in events]
     storage.save_data(data, file)

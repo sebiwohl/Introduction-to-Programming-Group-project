@@ -25,10 +25,19 @@ STATUS_DELETED = "deleted"
 VOTE_DELETE = "delete"
 VOTE_KEEP = "keep"
 
+# Event types. Over/under is stored with the same two sides: yes = over, no = under.
+TYPE_YES_NO = "yes_no"
+TYPE_OVER_UNDER = "over_under"
+EVENT_TYPES = (TYPE_YES_NO, TYPE_OVER_UNDER)
+
 
 @dataclass
 class User:
-    """A person who can log in and bet. Balance is in coins, 2 decimals."""
+    """A person who can log in and bet. Balance is in coins, 2 decimals.
+
+    group_id, role and balance are not stored on the user: they come from the
+    user's membership (see Membership) and are filled in when data is loaded.
+    """
 
     id: str
     username: str
@@ -50,8 +59,26 @@ class Group:
 
 
 @dataclass
+class Membership:
+    """A user's place in one group: their role, balance and restriction there."""
+
+    id: str
+    user_id: str
+    group_id: str
+    role: str = ROLE_MEMBER
+    balance: Decimal = Decimal("0")
+    restricted: bool = False
+
+
+@dataclass
 class Event:
-    """Something the group bets on. Outcome is None until resolved."""
+    """Something the group bets on. Outcome is None until resolved.
+
+    event_type is yes/no or over/under. For over/under, line is the number set
+    by the creator and result_value the actual number entered when resolving.
+    event_time is when the event happens; betting closes at close_time, which
+    is never later. Old events without an event date use their close_time.
+    """
 
     id: str
     group_id: str
@@ -62,6 +89,15 @@ class Event:
     status: str = STATUS_OPEN
     outcome: Optional[str] = None
     flags: list = field(default_factory=list)
+    event_type: str = TYPE_YES_NO
+    line: Optional[Decimal] = None
+    event_time: Optional[datetime] = None
+    result_value: Optional[Decimal] = None
+
+    def __post_init__(self) -> None:
+        """Use the close time as the event date when none is given."""
+        if self.event_time is None:
+            self.event_time = self.close_time
 
 
 @dataclass
@@ -86,3 +122,36 @@ class Poll:
     closes_at: datetime
     votes: dict = field(default_factory=dict)
     result: Optional[str] = None
+
+
+@dataclass
+class TopUp:
+    """Coins the admin gave to every member of a group at once."""
+
+    id: str
+    group_id: str
+    amount: Decimal
+    created_by: str
+    created_at: datetime
+
+
+@dataclass
+class Repayment:
+    """The moment the admin confirmed "Repaid": a new period starts."""
+
+    id: str
+    group_id: str
+    created_by: str
+    created_at: datetime
+
+
+@dataclass
+class Notification:
+    """A message for one user inside the app (no email or push)."""
+
+    id: str
+    user_id: str
+    group_id: Optional[str]
+    text: str
+    created_at: datetime
+    read: bool = False
