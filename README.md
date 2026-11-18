@@ -19,6 +19,14 @@ SEED_PASSWORD=<choose-one> python scripts/seed.py
 
 `--database` writes to `DATABASE_URL` instead and asks for confirmation, because it replaces everything there. Never run it against the deployed app without the team agreeing.
 
+Manual backup: copy all the data into `data/exports/` (git-ignored). It only reads, so it is safe on the deployed data too. Do it before any change to the stored data format and before the demo:
+
+```bash
+python scripts/export.py --database
+```
+
+Without `--database` it copies the local file. The copy holds every user's password hash: keep it private, never commit or share it.
+
 ## Data storage
 
 Locally the app stores its data in `data/data.json`. The deployed app uses a Supabase (PostgreSQL) database instead, because Streamlit Community Cloud erases local files on every reboot.
