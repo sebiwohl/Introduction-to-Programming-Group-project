@@ -24,12 +24,14 @@ from src.convert import (
     bet_to_dict,
     event_from_dict,
     event_to_dict,
+    find_membership,
     group_from_dict,
     group_to_dict,
     poll_from_dict,
     poll_to_dict,
     user_from_dict,
     user_to_dict,
+    money_to_cents,
 )
 from src.models import (
     AVATARS,
@@ -120,9 +122,14 @@ class _State:
 
 
 def _unpack(data: dict) -> _State:
-    """Convert the stored dicts into dataclasses."""
+    """Convert the stored dicts into dataclasses.
+
+    Each user gets the group, role and balance of their membership.
+    """
+    memberships = data["memberships"]
     return _State(
-        users={u["id"]: user_from_dict(u) for u in data["users"]},
+        users={u["id"]: user_from_dict(u, find_membership(memberships, u["id"]))
+               for u in data["users"]},
         groups={g["id"]: group_from_dict(g) for g in data["groups"]},
         events={e["id"]: event_from_dict(e) for e in data["events"]},
         bets=[bet_from_dict(b) for b in data["bets"]],
@@ -130,9 +137,19 @@ def _unpack(data: dict) -> _State:
     )
 
 
+def _pack_balances(state: _State, data: dict) -> None:
+    """Write each user's role and balance back into their stored membership."""
+    for user in state.users.values():
+        membership = find_membership(data["memberships"], user.id)
+        if membership is not None and membership["group_id"] == user.group_id:
+            membership["role"] = user.role
+            membership["balance"] = money_to_cents(user.balance)
+
+
 def _pack(state: _State, data: dict) -> None:
     """Write the dataclasses back into the stored dicts (in place)."""
     data["users"] = [user_to_dict(u) for u in state.users.values()]
+    _pack_balances(state, data)
     data["groups"] = [group_to_dict(g) for g in state.groups.values()]
     data["events"] = [event_to_dict(e) for e in state.events.values()]
     data["bets"] = [bet_to_dict(b) for b in state.bets]
@@ -391,6 +408,7 @@ def create_event(
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
             title=title, description=description, close_time=close_time,
+            event_time=close_time,
         )
         state.events[event.id] = event
         _pack(state, data)

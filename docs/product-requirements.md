@@ -150,9 +150,11 @@ Data is kept in the JSON format below, loaded at start-up and saved after every 
 
 **Where it lives.** The deployed app runs on Streamlit Community Cloud, which erases local files on every reboot (confirmed with a hosting test on 2026-11-16). So when the `DATABASE_URL` environment variable is set, the data is stored in a Supabase (PostgreSQL) database instead: the whole data structure is one JSON row in the table `app_data`, and backups are rows in `app_data_backups` (the newest 20 of each kind are kept). Each change locks the row (`SELECT ... FOR UPDATE`), so two users saving at the same time cannot overwrite each other, and a failed change is rolled back. Both tables have row level security turned on, so Supabase's public web API cannot read them. Without `DATABASE_URL` (local development and tests) the JSON file described next is used.
 
-All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 1) next to the `users`, `groups`, `events`, `bets` and `polls` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
+All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 2) next to the `users`, `memberships`, `groups`, `events`, `bets`, `polls`, `topups`, `repayments` and `notifications` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
 
-Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected.
+Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected. A user has at most one membership per group. An over/under event must have a line and a yes/no event must not; only over/under events have a result number; betting must close no later than the event date (`close_time` <= `event_time`).
+
+**Older data.** Data saved with `schema_version` 1 (group, role and balance on the user) is upgraded when it is loaded (`src/migration.py`) and saved in the new format at the next change, so existing files, database rows and backups keep working without a separate step.
 
 ### 4.2 Entities
 
@@ -163,10 +165,18 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | id            | Unique identifier                   |
 | username      | Unique name                         |
 | password_hash | Salted hash, never the plain password |
-| group_id      | Group the user belongs to           |
-| role          | member or admin                     |
-| balance       | Current coins                       |
 | avatar        | Optional profile picture: fox, panda, cat, dog, frog, owl or rabbit (left out until the user picks one) |
+
+**Membership** (a user's place in one group)
+
+| Field      | Description                                        |
+| ---------- | -------------------------------------------------- |
+| id         | Unique identifier                                  |
+| user_id    | The member                                         |
+| group_id   | The group                                          |
+| role       | member or admin                                    |
+| balance    | Current coins in this group                        |
+| restricted | true when the admin has restricted the member (2.2) |
 
 **Group**
 
@@ -176,7 +186,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | name          | Group name                 |
 | admin_id      | The admin's user id        |
 | invite_code   | Code for joining           |
-| start_balance | Coins given to new members |
+| start_balance | Coins given to new members (until top-ups replace it, see 2.4) |
 
 **Event**
 
@@ -188,8 +198,12 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | title, description | Text shown in the feed                              |
 | close_time         | When betting locks                                  |
 | status             | open, paused, closed, resolved, deleted             |
-| outcome            | yes, no, or empty until resolved                    |
+| outcome            | yes, no, or empty until resolved (over/under: yes = over, no = under) |
 | flags              | List of user ids who flagged it                     |
+| type               | yes_no or over_under                                |
+| line               | Over/under line as decimal text ("2.5"), empty for yes/no |
+| event_time         | When the event happens; betting closes no later     |
+| result_value       | Over/under: the actual number entered when resolving, as decimal text |
 
 **Bet**
 
@@ -212,6 +226,36 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | closes_at | When voting ends                                       |
 | votes     | Map of user id to delete or keep                       |
 | result    | Empty until closed, then deleted or kept               |
+
+**TopUp**
+
+| Field      | Description                              |
+| ---------- | ---------------------------------------- |
+| id         | Unique identifier                        |
+| group_id   | Group whose members all got this amount  |
+| amount     | Coins per member                         |
+| created_by | The admin                                |
+| created_at | When it happened                         |
+
+**Repayment** (the admin confirmed "Repaid"; a new period starts)
+
+| Field      | Description       |
+| ---------- | ----------------- |
+| id         | Unique identifier |
+| group_id   | The group         |
+| created_by | The admin         |
+| created_at | When it happened  |
+
+**Notification**
+
+| Field      | Description                          |
+| ---------- | ------------------------------------ |
+| id         | Unique identifier                    |
+| user_id    | Who it is for                        |
+| group_id   | The group it is about, or empty      |
+| text       | The message                          |
+| created_at | When it was created                  |
+| read       | true once the user has seen it       |
 
 ### 4.3 Calculated, not stored
 Pool, stake per side, odds and the leaderboard are calculated from the bets and balances when needed. This keeps the stored data consistent.

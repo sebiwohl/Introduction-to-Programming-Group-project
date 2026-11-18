@@ -21,10 +21,14 @@ def sample_data():
     """Return a small valid data dict with one group, two users and one event."""
     data = storage.empty_data()
     data["users"] = [
-        {"id": "u1", "username": "Anna", "password_hash": "h1", "group_id": "g1",
-         "role": "admin", "balance": 100000},
-        {"id": "u2", "username": "Ben", "password_hash": "h2", "group_id": "g1",
-         "role": "member", "balance": 100000},
+        {"id": "u1", "username": "Anna", "password_hash": "h1"},
+        {"id": "u2", "username": "Ben", "password_hash": "h2"},
+    ]
+    data["memberships"] = [
+        {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin",
+         "balance": 100000, "restricted": False},
+        {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member",
+         "balance": 100000, "restricted": False},
     ]
     data["groups"] = [
         {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC234",
@@ -33,7 +37,8 @@ def sample_data():
     data["events"] = [
         {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Rain on Saturday",
          "description": "", "close_time": "2026-11-20T18:00:00+00:00",
-         "status": "open", "outcome": None, "flags": []},
+         "status": "open", "outcome": None, "flags": [], "type": "yes_no", "line": None,
+         "event_time": "2026-11-20T18:00:00+00:00", "result_value": None},
     ]
     return data
 
@@ -75,8 +80,8 @@ def test_explicit_path_always_means_file(monkeypatch, tmp_path):
     storage.save_data(sample_data(), file)
     assert storage.load_data(file) == sample_data()
     with storage.transaction(file) as data:
-        data["users"][0]["balance"] = 5
-    assert storage.load_data(file)["users"][0]["balance"] == 5
+        data["memberships"][0]["balance"] = 5
+    assert storage.load_data(file)["memberships"][0]["balance"] == 5
 
 
 def test_unreachable_database_raises_storage_error(monkeypatch):
@@ -107,7 +112,7 @@ def test_invalid_data_rejected_before_connecting(monkeypatch):
     """save_data validates first, so invalid data fails even without a database."""
     monkeypatch.setenv("DATABASE_URL", UNREACHABLE_URL)
     data = sample_data()
-    data["users"][0]["balance"] = -1
+    data["memberships"][0]["balance"] = -1
     with pytest.raises(storage.StorageError) as caught:
         storage.save_data(data)
     assert "balance" in str(caught.value)
@@ -278,7 +283,7 @@ def test_save_then_load_round_trip(db):
     storage.save_data(sample_data())
     loaded = storage.load_data()
     assert loaded == sample_data()
-    assert type(loaded["users"][0]["balance"]) is int
+    assert type(loaded["memberships"][0]["balance"]) is int
 
 
 @needs_db
@@ -297,8 +302,8 @@ def test_transaction_saves_changes(db):
     """Changes made inside a transaction are saved."""
     storage.save_data(sample_data())
     with storage.transaction() as data:
-        data["users"][1]["balance"] = 4200
-    assert storage.load_data()["users"][1]["balance"] == 4200
+        data["memberships"][1]["balance"] = 4200
+    assert storage.load_data()["memberships"][1]["balance"] == 4200
 
 
 @needs_db
@@ -315,7 +320,7 @@ def test_failed_transaction_saves_nothing(db):
     storage.save_data(sample_data())
     with pytest.raises(ValueError):
         with storage.transaction() as data:
-            data["users"][1]["balance"] = 1
+            data["memberships"][1]["balance"] = 1
             raise ValueError("rule broken")
     assert storage.load_data() == sample_data()
     assert storage.list_backups() == []
@@ -327,7 +332,7 @@ def test_invalid_change_in_transaction_saves_nothing(db):
     storage.save_data(sample_data())
     with pytest.raises(storage.StorageError):
         with storage.transaction() as data:
-            data["users"][1]["balance"] = -5
+            data["memberships"][1]["balance"] = -5
     assert storage.load_data() == sample_data()
 
 
@@ -346,9 +351,9 @@ def test_each_save_keeps_a_backup(db):
     storage.save_data(sample_data())
     assert storage.list_backups() == []
     with storage.transaction() as data:
-        data["users"][1]["balance"] = 1
+        data["memberships"][1]["balance"] = 1
     with storage.transaction() as data:
-        data["users"][1]["balance"] = 2
+        data["memberships"][1]["balance"] = 2
     names = storage.list_backups()
     assert len(names) == 2
     assert all(name.startswith("backup-") for name in names)
@@ -360,7 +365,7 @@ def test_backups_are_pruned(db, monkeypatch):
     monkeypatch.setattr(storage, "MAX_BACKUPS", 3)
     for balance in range(1, 8):
         data = sample_data()
-        data["users"][1]["balance"] = balance
+        data["memberships"][1]["balance"] = balance
         storage.save_data(data)
     assert len(storage.list_backups()) == 3
 
@@ -369,7 +374,7 @@ def test_backups_are_pruned(db, monkeypatch):
 def test_damaged_data_raises_on_load(db):
     """Data that fails validation is reported, not returned."""
     broken = sample_data()
-    broken["users"][0]["balance"] = 1.5
+    broken["memberships"][0]["balance"] = 1.5
     write_raw(broken)
     with pytest.raises(storage.StorageError) as caught:
         storage.load_data()
@@ -381,7 +386,7 @@ def test_recovery_restores_newest_valid_backup(db):
     """load_with_recovery restores the newest valid backup and keeps the broken copy."""
     storage.save_data(sample_data())
     newer = sample_data()
-    newer["users"][1]["balance"] = 777
+    newer["memberships"][1]["balance"] = 777
     storage.save_data(newer)  # backup now holds sample_data()
     storage.save_data(newer)  # backup now also holds `newer`
     broken = sample_data()
@@ -430,14 +435,14 @@ def test_parallel_transactions_lose_no_update(db):
 
     def add_one():
         with storage.transaction() as data:
-            data["users"][1]["balance"] += 1
+            data["memberships"][1]["balance"] += 1
 
     threads = [threading.Thread(target=add_one) for _ in range(10)]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join()
-    assert storage.load_data()["users"][1]["balance"] == 100010
+    assert storage.load_data()["memberships"][1]["balance"] == 100010
 
 
 @needs_db
@@ -473,9 +478,9 @@ def test_real_connection_is_reused_across_calls(db, monkeypatch):
     for _ in range(3):
         storage.load_data()
     with storage.transaction() as data:
-        data["users"][1]["balance"] = 7
+        data["memberships"][1]["balance"] = 7
     assert len(opened) == 1
-    assert storage.load_data()["users"][1]["balance"] == 7
+    assert storage.load_data()["memberships"][1]["balance"] == 7
 
 
 @needs_db
@@ -484,6 +489,37 @@ def test_failed_transaction_leaves_connection_usable(db):
     storage.save_data(sample_data())
     with pytest.raises(ValueError):
         with storage.transaction() as data:
-            data["users"][1]["balance"] = 1
+            data["memberships"][1]["balance"] = 1
             raise ValueError("rule broken")
     assert storage.load_data() == sample_data()
+
+
+# --- schema version 1 data in the database -------------------------------------
+
+@needs_db
+def test_version_1_row_is_upgraded_and_saved_as_version_2(db):
+    """An old row loads in the new format; the next save writes version 2 and backs up version 1."""
+    from src.migration import upgrade
+    from tests.test_migration import version_1_data
+
+    write_raw(version_1_data())
+    assert storage.load_data() == upgrade(version_1_data())
+    with storage.transaction():
+        pass
+    assert run_sql("SELECT data->>'schema_version' FROM app_data") == [("2",)]
+    assert run_sql("SELECT data->>'schema_version' FROM app_data_backups") == [("1",)]
+
+
+@needs_db
+def test_version_1_backup_restores_in_the_new_format(db):
+    """Recovery can use a backup saved before the upgrade."""
+    from src.migration import upgrade
+    from tests.test_migration import version_1_data
+
+    write_raw(version_1_data())
+    with storage.transaction():
+        pass  # the version 1 row becomes a backup
+    write_raw({"broken": True})
+    data, warning = storage.load_with_recovery()
+    assert warning is not None
+    assert data == upgrade(version_1_data())
