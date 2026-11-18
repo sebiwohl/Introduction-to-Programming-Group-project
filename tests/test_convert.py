@@ -231,3 +231,12 @@ def test_number_to_text_rejects_unsafe_values(number):
 def test_text_to_number_rejects_non_numbers(text):
     with pytest.raises(ConversionError):
         text_to_number(text)
+
+
+def test_user_avatar_round_trips_and_is_left_out_when_empty():
+    from src.models import User
+    picked = User(id="u1", username="Anna", password_hash="h", avatar="fox")
+    plain = User(id="u2", username="Ben", password_hash="h")
+    assert user_from_dict(user_to_dict(picked)).avatar == "fox"
+    assert "avatar" not in user_to_dict(plain)
+    assert user_from_dict(user_to_dict(plain)).avatar == ""

@@ -161,6 +161,10 @@ RULES: dict[str, dict[str, Rule]] = {
         "id": (_is_text, "a non-empty string"),
         "username": (_is_text, "a non-empty string"),
         "password_hash": (_is_text, "a non-empty string"),
+        "avatar": (
+            partial(_is_choice, ("fox", "panda", "cat", "dog", "frog", "owl", "rabbit")),
+            "fox, panda, cat, dog, frog, owl or rabbit",
+        ),
     },
     "memberships": {
         "id": (_is_text, "a non-empty string"),
@@ -235,6 +239,10 @@ RULES: dict[str, dict[str, Rule]] = {
 }
 
 
+# Fields a record may leave out (added after data was first saved).
+OPTIONAL: dict[str, set[str]] = {"users": {"avatar"}}
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -295,11 +303,13 @@ def _check_record(section: str, record: Data, index: int, ids: dict[str, set[str
     """Check that a record has exactly the allowed fields and that each value is valid."""
     label = _label(section, record, index)
     rules = RULES[section]
-    for field in sorted(rules.keys() - record.keys()):
+    for field in sorted(rules.keys() - record.keys() - OPTIONAL.get(section, set())):
         raise StorageError(f"{label}.{field} is missing")
     for field in sorted(map(str, record.keys() - rules.keys())):
         raise StorageError(f"{label}.{field} is not an allowed field")
     for field, (predicate, description) in rules.items():
+        if field not in record:
+            continue
         if not predicate(record[field], ids):
             raise StorageError(f"{label}.{field} must be {description}, got {record[field]!r}")
 

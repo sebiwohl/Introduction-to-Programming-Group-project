@@ -85,3 +85,9 @@ def test_database_seed_is_cancelled_without_yes(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda prompt: "no")
     with pytest.raises(SystemExit):
         seed._confirm_database()
+
+
+def test_demo_accounts_have_profile_pictures(seeded):
+    seed, _, data = seeded
+    pictures = {u["username"]: u.get("avatar") for u in data["users"]}
+    assert pictures == {seed.ADMIN: "fox", seed.MEMBER: "panda", "anna": "cat", "ben": None}
