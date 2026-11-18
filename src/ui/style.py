@@ -232,6 +232,11 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
 .ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
+.ci-profile {display: flex; align-items: center; gap: 16px; margin-top: 18px;}
+.ci-profile .ci-avatar {width: 64px; height: 64px; font-size: 1.6rem;}
+.ci-tiles + .ci-tiles-more {margin-top: -12px;}
+.ci-profile-name {font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 8px;}
 
 @media (max-width: 760px) {
   .ci-h1 {font-size: 2.2rem;}
