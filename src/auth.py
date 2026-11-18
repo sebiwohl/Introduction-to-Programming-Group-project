@@ -42,6 +42,7 @@ INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 INVITE_LENGTH = 6
 
 LOGIN_FAILED = "Wrong username or password."
+TOP_UP_REQUIRED = "Top-up required before creating events."
 RESTRICTED = "The admin has restricted you in this group: you can only view until they lift it."
 
 # Actions for require_permission(), from the roles table in requirements 2.1.
@@ -55,9 +56,10 @@ OPEN_POLL = "open_poll"
 DELETE_EVENT = "delete_event"
 MANAGE_MEMBERS = "manage_members"
 TRANSFER_ADMIN = "transfer_admin"
+TOP_UP = "top_up"
 
 MEMBER_ACTIONS = {VIEW_FEED, CREATE_EVENT, PLACE_BET, FLAG_EVENT, VOTE_POLL}
-ADMIN_ONLY_ACTIONS = {OPEN_POLL, MANAGE_MEMBERS, TRANSFER_ADMIN}
+ADMIN_ONLY_ACTIONS = {OPEN_POLL, MANAGE_MEMBERS, TRANSFER_ADMIN, TOP_UP}
 CREATOR_OR_ADMIN_ACTIONS = {RESOLVE_EVENT: "resolve", DELETE_EVENT: "delete"}
 
 
@@ -306,7 +308,8 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
     Every action needs a group. When an event is given, it must be in one of
     the user's groups. Resolving and deleting an event are allowed for its
     creator and the group admin; open_poll, manage_members and transfer_admin
-    are admin-only. A restricted member may only view (requirements 2.2).
+    are admin-only, like top_up. A restricted member may only view (requirements
+    2.2), and a member with a balance of 0 cannot create events (2.4).
     Time limits (such as deleting only more than 3 hours before betting closes)
     are checked where the action happens.
     """
@@ -316,6 +319,8 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
         raise AuthError("Event not found.")
     if user.restricted and action != VIEW_FEED:
         raise AuthError(RESTRICTED)
+    if action == CREATE_EVENT and user.balance <= 0:
+        raise AuthError(TOP_UP_REQUIRED)
     if action in MEMBER_ACTIONS:
         return
     if action in CREATOR_OR_ADMIN_ACTIONS:

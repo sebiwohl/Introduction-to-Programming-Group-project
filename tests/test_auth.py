@@ -208,8 +208,12 @@ def test_unknown_user_cannot_create_or_join(path):
 # --- permissions ----------------------------------------------------------------
 
 def make_user(user_id, role="member", group_id="g1"):
-    """Return a user for permission checks (no storage needed)."""
-    return User(id=user_id, username=user_id, password_hash="h", group_id=group_id, role=role)
+    """Return a user for permission checks (no storage needed).
+
+    They have coins, because a balance of 0 blocks creating events (requirement 2.4).
+    """
+    return User(id=user_id, username=user_id, password_hash="h", group_id=group_id, role=role,
+                balance=Decimal("100"))
 
 
 def make_event(creator_id="u2", group_id="g1"):

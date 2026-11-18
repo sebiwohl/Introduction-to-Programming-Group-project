@@ -17,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from src import auth, betting, moderation, storage
+from src import auth, balances, betting, moderation, storage
 from src.betting import BettingError
 from src.convert import (
     bet_from_dict,
@@ -446,7 +446,10 @@ def event_details(user_id: str, event_id: str, now: datetime, path=None) -> Even
 def place_bet(
     user_id: str, event_id: str, side: str, stake: Decimal, now: datetime, path=None
 ) -> Bet:
-    """Place a bet and save the new balance and the bet together; return the bet."""
+    """Place a bet and save the new balance and the bet together; return the bet.
+
+    If the bet takes the member below 10% of the last top-up, the admin is notified.
+    """
     _require_aware(now, "now")
     with storage.transaction(path) as data:
         state = _unpack(data)
@@ -457,6 +460,7 @@ def place_bet(
         bet = betting.place_bet(user, event, side, stake, now)
         state.bets.append(bet)
         _pack(state, data)
+        balances.notify_if_low(data, event.group_id, user_id, bet.stake, now)
     return bet
 
 
