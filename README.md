@@ -11,6 +11,14 @@ pytest
 
 Database tests are skipped unless `TEST_DATABASE_URL` points to an empty test database (never the real one).
 
+Demo data (one group, four demo accounts, events in every state) goes into the local file. The demo password is read from `SEED_PASSWORD`, so it is never committed:
+
+```bash
+SEED_PASSWORD=<choose-one> python scripts/seed.py
+```
+
+`--database` writes to `DATABASE_URL` instead and asks for confirmation, because it replaces everything there. Never run it against the deployed app without the team agreeing.
+
 ## Data storage
 
 Locally the app stores its data in `data/data.json`. The deployed app uses a Supabase (PostgreSQL) database instead, because Streamlit Community Cloud erases local files on every reboot.

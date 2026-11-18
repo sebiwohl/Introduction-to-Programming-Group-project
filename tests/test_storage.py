@@ -13,16 +13,24 @@ from src import storage
 from src.storage import StorageError
 
 
+def yes_no(close_time: str) -> dict[str, Any]:
+    """Return the version 2 event fields of a yes/no event that happens when betting closes."""
+    return {"type": "yes_no", "line": None, "event_time": close_time, "result_value": None}
+
+
 def build_valid_data() -> dict[str, Any]:
     """Build a valid data set: one group, open event with bets, resolved event, poll."""
     data = storage.empty_data()
     data["users"] = [
-        {"id": "u1", "username": "anna", "password_hash": "h1", "group_id": "g1",
-         "role": "admin", "balance": 1000},
-        {"id": "u2", "username": "ben", "password_hash": "h2", "group_id": "g1",
-         "role": "member", "balance": 990},
-        {"id": "u3", "username": "carl", "password_hash": "h3", "group_id": None,
-         "role": "member", "balance": 500},
+        {"id": "u1", "username": "anna", "password_hash": "h1"},
+        {"id": "u2", "username": "ben", "password_hash": "h2"},
+        {"id": "u3", "username": "carl", "password_hash": "h3"},
+    ]
+    data["memberships"] = [
+        {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin", "balance": 1000,
+         "restricted": False},
+        {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member", "balance": 990,
+         "restricted": False},
     ]
     data["groups"] = [
         {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC123",
@@ -31,13 +39,30 @@ def build_valid_data() -> dict[str, Any]:
     data["events"] = [
         {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Anna is late",
          "description": "", "close_time": "2026-11-20T19:00:00+00:00", "status": "open",
-         "outcome": None, "flags": []},
+         "outcome": None, "flags": [], **yes_no("2026-11-20T19:00:00+00:00")},
         {"id": "e2", "group_id": "g1", "creator_id": "u2", "title": "It rains",
          "description": "On Saturday", "close_time": "2026-11-10T12:00:00+00:00",
-         "status": "resolved", "outcome": "yes", "flags": ["u3"]},
+         "status": "resolved", "outcome": "yes", "flags": ["u3"],
+         **yes_no("2026-11-10T12:00:00+00:00")},
         {"id": "e3", "group_id": "g1", "creator_id": "u2", "title": "Fishy event",
          "description": "", "close_time": "2026-11-25T12:00:00+00:00", "status": "paused",
-         "outcome": None, "flags": ["u1", "u2"]},
+         "outcome": None, "flags": ["u1", "u2"], **yes_no("2026-11-25T12:00:00+00:00")},
+        {"id": "e4", "group_id": "g1", "creator_id": "u1", "title": "Goals on Sunday",
+         "description": "", "close_time": "2026-11-29T15:00:00+00:00", "status": "open",
+         "outcome": None, "flags": [], "type": "over_under", "line": "2.5",
+         "event_time": "2026-11-29T16:00:00+00:00", "result_value": None},
+    ]
+    data["topups"] = [
+        {"id": "t1", "group_id": "g1", "amount": 1000, "created_by": "u1",
+         "created_at": "2026-11-01T10:00:00+00:00"},
+    ]
+    data["repayments"] = [
+        {"id": "r1", "group_id": "g1", "created_by": "u1",
+         "created_at": "2026-11-01T09:00:00+00:00"},
+    ]
+    data["notifications"] = [
+        {"id": "n1", "user_id": "u1", "group_id": "g1", "text": "Ben is running low.",
+         "created_at": "2026-11-12T08:00:00+00:00", "read": False},
     ]
     data["bets"] = [
         {"id": "b1", "event_id": "e1", "user_id": "u1", "side": "yes", "stake": 10,
@@ -80,13 +105,13 @@ def save_balances(path: Path, count: int) -> None:
     """Save the valid data `count` times, with u1's balance set to 1, 2, ... count."""
     data = build_valid_data()
     for number in range(1, count + 1):
-        data["users"][0]["balance"] = number
+        data["memberships"][0]["balance"] = number
         storage.save_data(data, path)
 
 
 def balance_of(path: Path) -> int:
     """Return u1's balance as stored in the given file."""
-    return find(storage.load_data(path), "users", "u1")["balance"]
+    return find(storage.load_data(path), "memberships", "m1")["balance"]
 
 
 # 1 -------------------------------------------------------------------------
@@ -134,7 +159,7 @@ def test_missing_section_raises(path: Path, valid: dict[str, Any]) -> None:
 
 def test_wrong_schema_version_raises(path: Path, valid: dict[str, Any]) -> None:
     """A different schema_version raises StorageError."""
-    valid["schema_version"] = 2
+    valid["schema_version"] = 3
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(valid), encoding="utf-8")
     with pytest.raises(StorageError, match="schema_version"):
@@ -157,8 +182,8 @@ def test_valid_fixture_passes_validate(valid: dict[str, Any]) -> None:
 
 
 def test_new_user_without_group_is_valid(valid: dict[str, Any]) -> None:
-    """A user with group_id null is accepted."""
-    assert find(valid, "users", "u3")["group_id"] is None
+    """A user without a group (no membership) is accepted."""
+    assert all(m["user_id"] != "u3" for m in valid["memberships"])
     storage.validate(valid)
 
 
@@ -287,17 +312,17 @@ INVALID_CHANGES = {
     "float stake": set_field("bets", "b1", "stake", 12.5),
     "boolean stake": set_field("bets", "b1", "stake", True),
     "zero stake": set_field("bets", "b1", "stake", 0),
-    "negative balance": set_field("users", "u2", "balance", -1),
-    "float balance": set_field("users", "u2", "balance", 10.0),
-    "boolean balance": set_field("users", "u2", "balance", False),
+    "negative balance": set_field("memberships", "m2", "balance", -1),
+    "float balance": set_field("memberships", "m2", "balance", 10.0),
+    "boolean balance": set_field("memberships", "m2", "balance", False),
     "zero start balance": set_field("groups", "g1", "start_balance", 0),
     "float payout": set_field("bets", "b3", "payout", 15.0),
     "unknown status": set_field("events", "e1", "status", "archived"),
     "bad side": set_field("bets", "b1", "side", "maybe"),
-    "bad role": set_field("users", "u1", "role", "owner"),
+    "bad role": set_field("memberships", "m1", "role", "owner"),
     "bet on missing event": set_field("bets", "b1", "event_id", "nope"),
     "bet by missing user": set_field("bets", "b1", "user_id", "nope"),
-    "user in missing group": set_field("users", "u1", "group_id", "nope"),
+    "user in missing group": set_field("memberships", "m1", "group_id", "nope"),
     "flag by unknown user": set_field("events", "e1", "flags", ["ghost"]),
     "duplicate flag": duplicate_flag,
     "duplicate id": duplicate_id,
@@ -326,6 +351,23 @@ INVALID_CHANGES = {
     "poll opened by unknown user": set_field("polls", "p1", "opened_by", "ghost"),
     "bad poll result": set_field("polls", "p1", "result", "tie"),
     "unparsable closes_at": set_field("polls", "p1", "closes_at", "soon"),
+    "membership by missing user": set_field("memberships", "m2", "user_id", "ghost"),
+    "membership repeated": set_field("memberships", "m2", "user_id", "u1"),
+    "restricted not a boolean": set_field("memberships", "m1", "restricted", 0),
+    "unknown event type": set_field("events", "e1", "type", "multiple"),
+    "over_under without line": set_field("events", "e4", "line", None),
+    "line as a float": set_field("events", "e4", "line", 2.5),
+    "line not a number": set_field("events", "e4", "line", "two"),
+    "yes_no with a line": set_field("events", "e1", "line", "2.5"),
+    "yes_no with a result value": set_field("events", "e1", "result_value", "3"),
+    "betting closes after the event": set_field("events", "e4", "event_time",
+                                                "2026-11-29T14:00:00+00:00"),
+    "event_time without offset": set_field("events", "e4", "event_time", "2026-11-29T16:00"),
+    "zero top-up": set_field("topups", "t1", "amount", 0),
+    "top-up in missing group": set_field("topups", "t1", "group_id", "nope"),
+    "repayment by unknown user": set_field("repayments", "r1", "created_by", "ghost"),
+    "notification read not a boolean": set_field("notifications", "n1", "read", "no"),
+    "empty notification": set_field("notifications", "n1", "text", " "),
 }
 
 
@@ -369,7 +411,7 @@ def test_failed_replace_keeps_old_file_and_removes_temp(
     storage.save_data(valid, path)
     before = path.read_bytes()
     changed = copy.deepcopy(valid)
-    changed["users"][0]["balance"] = 1
+    changed["memberships"][0]["balance"] = 1
 
     def broken_replace(source: Any, target: Any) -> None:
         """Simulate a failing replace."""
@@ -397,7 +439,7 @@ def test_second_save_backs_up_previous_content_exactly(
     """The backup holds the exact bytes of the file before the second save."""
     storage.save_data(valid, path)
     before = path.read_bytes()
-    valid["users"][0]["balance"] = 5
+    valid["memberships"][0]["balance"] = 5
     storage.save_data(valid, path)
     backups = storage.list_backups(path)
     assert len(backups) == 1
@@ -413,7 +455,7 @@ def test_only_20_newest_backups_are_kept(path: Path) -> None:
     backups = storage.list_backups(path)
     assert storage.MAX_BACKUPS == 20
     assert len(backups) == 20
-    balances = [find(storage.load_data(b), "users", "u1")["balance"] for b in backups]
+    balances = [find(storage.load_data(b), "memberships", "m1")["balance"] for b in backups]
     assert balances == list(range(24, 4, -1))
     assert [b.name for b in backups] == sorted((b.name for b in backups), reverse=True)
 
@@ -480,7 +522,7 @@ def test_load_with_recovery_restores_and_warns(path: Path) -> None:
     newest = storage.list_backups(path)[0]
     path.write_text("garbage", encoding="utf-8")
     data, warning = storage.load_with_recovery(path)
-    assert find(data, "users", "u1")["balance"] == 2
+    assert find(data, "memberships", "m1")["balance"] == 2
     assert warning is not None
     assert newest.name in warning
     corrupt = list(path.parent.glob("data.corrupt-*.json"))
@@ -511,7 +553,7 @@ def test_load_with_recovery_does_not_undo_a_newer_save(
     monkeypatch.setattr(storage, "load_data", stale_first_load)
     data, warning = storage.load_with_recovery(path)
     assert warning is None
-    assert find(data, "users", "u1")["balance"] == 3
+    assert find(data, "memberships", "m1")["balance"] == 3
     assert path.read_bytes() == before
     assert list(path.parent.glob("data.corrupt-*.json")) == []
 
@@ -541,7 +583,7 @@ def save_with_busy_replace(
 
     monkeypatch.setattr(os, "replace", busy_replace)
     changed = copy.deepcopy(valid)
-    changed["users"][0]["balance"] = 7
+    changed["memberships"][0]["balance"] = 7
     try:
         storage.save_data(changed, path)
     finally:
@@ -600,7 +642,7 @@ def test_save_succeeds_while_a_reader_briefly_holds_the_file(
     timer = threading.Timer(0.2, reader.close)
     timer.start()
     try:
-        valid["users"][0]["balance"] = 9
+        valid["memberships"][0]["balance"] = 9
         storage.save_data(valid, path)
     finally:
         timer.join()
@@ -627,7 +669,7 @@ def test_transaction_saves_change(path: Path, valid: dict[str, Any]) -> None:
     """Changes made inside the block are saved when it ends."""
     storage.save_data(valid, path)
     with storage.transaction(path) as data:
-        find(data, "users", "u1")["balance"] = 42
+        find(data, "memberships", "m1")["balance"] = 42
     assert balance_of(path) == 42
 
 
@@ -637,7 +679,7 @@ def test_transaction_exception_saves_nothing(path: Path, valid: dict[str, Any]) 
     before = path.read_bytes()
     with pytest.raises(RuntimeError):
         with storage.transaction(path) as data:
-            find(data, "users", "u1")["balance"] = 42
+            find(data, "memberships", "m1")["balance"] = 42
             raise RuntimeError("boom")
     assert path.read_bytes() == before
     assert storage.list_backups(path) == []
@@ -649,7 +691,7 @@ def test_transaction_invalid_change_is_refused(path: Path, valid: dict[str, Any]
     before = path.read_bytes()
     with pytest.raises(StorageError):
         with storage.transaction(path) as data:
-            find(data, "users", "u1")["balance"] = -5
+            find(data, "memberships", "m1")["balance"] = -5
     assert path.read_bytes() == before
 
 
@@ -658,8 +700,9 @@ def test_transaction_on_missing_file_creates_it(path: Path) -> None:
     with storage.transaction(path) as data:
         data["groups"].append({"id": "g1", "name": "G", "admin_id": "u1",
                                "invite_code": "X", "start_balance": 100})
-        data["users"].append({"id": "u1", "username": "a", "password_hash": "h",
-                              "group_id": "g1", "role": "admin", "balance": 100})
+        data["users"].append({"id": "u1", "username": "a", "password_hash": "h"})
+        data["memberships"].append({"id": "m1", "user_id": "u1", "group_id": "g1",
+                                    "role": "admin", "balance": 100, "restricted": False})
     assert path.exists()
 
 
@@ -667,7 +710,7 @@ def test_transaction_on_missing_file_creates_it(path: Path) -> None:
 
 def test_two_threads_do_not_lose_updates(path: Path, valid: dict[str, Any]) -> None:
     """Two threads with 100 increments each raise the balance by exactly 200."""
-    valid["users"][0]["balance"] = 0
+    valid["memberships"][0]["balance"] = 0
     storage.save_data(valid, path)
     errors: list[BaseException] = []
 
@@ -676,7 +719,7 @@ def test_two_threads_do_not_lose_updates(path: Path, valid: dict[str, Any]) -> N
         try:
             for _ in range(100):
                 with storage.transaction(path) as data:
-                    find(data, "users", "u1")["balance"] += 1
+                    find(data, "memberships", "m1")["balance"] += 1
         except BaseException as error:  # collected and checked in the main thread
             errors.append(error)
 
