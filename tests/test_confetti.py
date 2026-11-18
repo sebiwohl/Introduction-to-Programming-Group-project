@@ -67,9 +67,15 @@ def test_amount_is_escaped():
     assert "<img" not in html and "&lt;img" in html
 
 
-def test_colours_come_from_the_palette():
-    colours = set(re.findall(r"background:(#[0-9A-F]{6})", confetti.markup()))
+def test_piece_colours_come_from_the_palette():
+    pieces = re.findall(r'<span class="ci-cf" style="([^"]+)"', confetti.markup())
+    colours = {re.search(r"background:(#[0-9A-F]{6})", style).group(1) for style in pieces}
     assert colours and colours <= set(confetti.COLOURS)
+
+
+def test_amount_card_is_white_with_a_blue_amount():
+    """The card must stand out on the black "You called it" banner as well as on the white page."""
+    assert "background:#FFFFFF" in confetti.CSS and "color:#3B3BE6" in confetti.CSS
 
 
 # --- which win gets confetti -------------------------------------------------------

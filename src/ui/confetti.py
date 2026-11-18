@@ -32,14 +32,15 @@ CSS = (
     "animation-fill-mode:both}"
     "@keyframes ci-cf-fall{0%{opacity:1;transform:translate(0,0) rotate(0) rotateY(0)}"
     "100%{opacity:1;transform:translate(var(--dx),106vh) rotate(var(--r)) rotateY(var(--f))}}"
-    # the amount won, in the black of the app's "You called it" banner
+    # the amount won: a white card, so it stands out over the black "You called it" banner too;
+    # the amount is in the blue the app uses for coins won
     ".ci-cf-card{position:absolute;left:50%;top:40%;display:flex;flex-direction:column;"
-    "align-items:center;gap:4px;padding:18px 36px 16px;border-radius:18px;background:#0A0A0A;"
-    "color:#FFFFFF;box-shadow:0 18px 50px rgba(0,0,0,.25);white-space:nowrap;"
+    "align-items:center;gap:4px;padding:18px 36px 16px;border-radius:18px;background:#FFFFFF;"
+    "color:#0A0A0A;border:1px solid #E6E6EB;box-shadow:0 18px 50px rgba(10,10,10,.18);white-space:nowrap;"
     "font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;"
     f"animation:ci-cf-pop .45s cubic-bezier(.2,1.4,.4,1) both,ci-confetti-end {LENGTH}s linear forwards}}"
-    ".ci-cf-card span{font-size:.72rem;font-weight:700;letter-spacing:.1em;color:#9C9CF5}"
-    ".ci-cf-card b{font-size:3.2rem;font-weight:900;line-height:1;letter-spacing:-.02em}"
+    ".ci-cf-card span{font-size:.72rem;font-weight:700;letter-spacing:.1em;color:#6B6B72}"
+    ".ci-cf-card b{font-size:3.2rem;font-weight:900;line-height:1;letter-spacing:-.02em;color:#3B3BE6}"
     ".ci-cf-card small{font-size:.7rem;font-weight:700;letter-spacing:.08em}"
     "@keyframes ci-cf-pop{from{opacity:0;transform:translate(-50%,-50%) scale(.6)}"
     "to{opacity:1;transform:translate(-50%,-50%) scale(1)}}"
