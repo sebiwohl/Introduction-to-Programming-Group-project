@@ -28,6 +28,8 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from src.models import KIND_NAMES, KIND_YES_NO, MAX_OPTION_LENGTH, MAX_OPTIONS, MIN_OPTIONS
+
 SCHEMA_VERSION = 1
 MAX_BACKUPS = 20
 DEFAULT_DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "data.json"
@@ -125,6 +127,43 @@ def _or_null(predicate: Predicate, value: Any, ids: dict[str, set[str]]) -> bool
     return value is None or predicate(value, ids)
 
 
+def _is_bool(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for True or False (not 0 or 1)."""
+    return type(value) is bool
+
+
+def _is_text_list(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for a list of unique non-empty strings (it may be empty)."""
+    return (isinstance(value, list) and all(_is_text(item, ids) for item in value)
+            and len(set(value)) == len(value))
+
+
+def _is_options(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for a names event's options.
+
+    MIN_OPTIONS to MAX_OPTIONS objects, each with exactly an id and a name;
+    ids are unique, names are trimmed, not empty, at most MAX_OPTION_LENGTH
+    characters and unique ignoring case.
+    """
+    if not isinstance(value, list) or not MIN_OPTIONS <= len(value) <= MAX_OPTIONS:
+        return False
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    for option in value:
+        if not isinstance(option, dict) or set(option) != {"id", "name"}:
+            return False
+        option_id, name = option["id"], option["name"]
+        if not _is_text(option_id, ids) or not isinstance(name, str):
+            return False
+        if not name or name != name.strip() or len(name) > MAX_OPTION_LENGTH:
+            return False
+        if option_id in seen_ids or name.casefold() in seen_names:
+            return False
+        seen_ids.add(option_id)
+        seen_names.add(name.casefold())
+    return True
+
+
 def _nullable(predicate: Predicate) -> Predicate:
     """Wrap a predicate so that None is accepted as well."""
     return partial(_or_null, predicate)
@@ -166,7 +205,7 @@ RULES: dict[str, dict[str, Rule]] = {
         "id": (_is_text, "a non-empty string"),
         "event_id": (partial(_is_ref, "events"), "an existing event id"),
         "user_id": (partial(_is_ref, "users"), "an existing user id"),
-        "side": (partial(_is_choice, ("yes", "no")), "yes or no"),
+        "side": (_is_text, "yes, no or an option id"),  # checked against the event in _check_bet_sides
         "stake": (partial(_is_int_min, 1), "a whole number > 0"),
         "payout": (_nullable(partial(_is_int_min, 0)), "a whole number >= 0 or null"),
     },
@@ -179,6 +218,20 @@ RULES: dict[str, dict[str, Rule]] = {
         "result": (_nullable(partial(_is_choice, ("deleted", "kept"))), "deleted, kept or null"),
     },
 }
+
+
+# Fields a record may leave out. Only names events have these; a yes/no event
+# is stored without them, exactly as before names events existed.
+OPTIONAL_RULES: dict[str, dict[str, Rule]] = {
+    "events": {
+        "kind": (partial(_is_choice, (KIND_YES_NO, KIND_NAMES)), f"{KIND_YES_NO} or {KIND_NAMES}"),
+        "options": (_is_options, f"{MIN_OPTIONS} to {MAX_OPTIONS} options, each with a unique id "
+                    f"and a unique, trimmed name of at most {MAX_OPTION_LENGTH} characters"),
+        "multi_winner": (_is_bool, "true or false"),
+        "winners": (_is_text_list, "a list of unique option ids"),
+    },
+}
+NAMES_FIELDS = ("options", "multi_winner", "winners")
 
 
 # ---------------------------------------------------------------------------
@@ -238,14 +291,19 @@ def _collect_ids(data: Data) -> dict[str, set[str]]:
 
 
 def _check_record(section: str, record: Data, index: int, ids: dict[str, set[str]]) -> None:
-    """Check that a record has exactly the allowed fields and that each value is valid."""
+    """Check that a record has exactly the allowed fields and that each value is valid.
+
+    Fields in OPTIONAL_RULES may be missing; when present they are checked too.
+    """
     label = _label(section, record, index)
     rules = RULES[section]
+    optional = OPTIONAL_RULES.get(section, {})
     for field in sorted(rules.keys() - record.keys()):
         raise StorageError(f"{label}.{field} is missing")
-    for field in sorted(map(str, record.keys() - rules.keys())):
+    for field in sorted(map(str, record.keys() - rules.keys() - optional.keys())):
         raise StorageError(f"{label}.{field} is not an allowed field")
-    for field, (predicate, description) in rules.items():
+    present = {**rules, **{name: rule for name, rule in optional.items() if name in record}}
+    for field, (predicate, description) in present.items():
         if not predicate(record[field], ids):
             raise StorageError(f"{label}.{field} must be {description}, got {record[field]!r}")
 
@@ -306,10 +364,63 @@ def _check_refunds(event: Data, bets: list[Data]) -> None:
             )
 
 
+def _is_names_event(event: Data) -> bool:
+    """Return True for a stored names event (an event without a kind is yes/no)."""
+    return event.get("kind", KIND_YES_NO) == KIND_NAMES
+
+
+def _check_names_fields(event: Data) -> None:
+    """Check the names fields: all present on a names event, none on a yes/no one.
+
+    On a names event the outcome stays null; the winners are option ids of
+    the event, set exactly when it is resolved, and only one unless several
+    can win.
+    """
+    label = f"events[{event['id']}]"
+    if not _is_names_event(event):
+        for field in NAMES_FIELDS:
+            if field in event:
+                raise StorageError(f"{label}.{field} is only allowed on a names event")
+        return
+    for field in NAMES_FIELDS:
+        if field not in event:
+            raise StorageError(f"{label}.{field} is missing")
+    if event["outcome"] is not None:
+        raise StorageError(f"{label}.outcome must be null on a names event, got {event['outcome']!r}")
+    winners = event["winners"]
+    if not set(winners) <= {option["id"] for option in event["options"]}:
+        raise StorageError(f"{label}.winners must be ids of this event's options, got {winners!r}")
+    if event["status"] != "resolved" and winners:
+        raise StorageError(f"{label}.winners must be empty unless resolved, got {winners!r}")
+    if event["status"] == "resolved" and not winners:
+        raise StorageError(f"{label}.winners must name at least one option when resolved")
+    if len(winners) > 1 and not event["multi_winner"]:
+        raise StorageError(f"{label}.winners must name exactly one option on a one-winner event")
+
+
+def _check_bet_sides(data: Data) -> None:
+    """Check that every bet's side fits its event: yes or no, or one of its option ids."""
+    options = {event["id"]: {option["id"] for option in event["options"]}
+               for event in data["events"] if _is_names_event(event)}
+    for bet in data["bets"]:
+        if bet["event_id"] in options:
+            if bet["side"] not in options[bet["event_id"]]:
+                raise StorageError(
+                    f"bets[{bet['id']}].side must be an option id of events[{bet['event_id']}], "
+                    f"got {bet['side']!r}"
+                )
+        elif bet["side"] not in ("yes", "no"):
+            raise StorageError(f"bets[{bet['id']}].side must be yes or no, got {bet['side']!r}")
+
+
 def _check_events(data: Data) -> None:
-    """Run the outcome, payout and refund checks for every event."""
+    """Run the names, side, outcome, payout and refund checks for every event."""
     for event in data["events"]:
-        _check_outcome(event)
+        _check_names_fields(event)
+    _check_bet_sides(data)
+    for event in data["events"]:
+        if not _is_names_event(event):
+            _check_outcome(event)
         if event["status"] == "resolved":
             _check_payouts(event, data["bets"])
         elif event["status"] == "deleted":

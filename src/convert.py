@@ -10,7 +10,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from src.models import CENT, Bet, Event, Group, Poll, User
+from src.models import CENT, KIND_NAMES, KIND_YES_NO, Bet, Event, Group, Option, Poll, User
 
 
 class ConversionError(ValueError):
@@ -107,8 +107,12 @@ def group_from_dict(data: dict) -> Group:
 # --- events, bets and polls ---------------------------------------------------
 
 def event_to_dict(event: Event) -> dict:
-    """Return an Event as a dict for storage."""
-    return {
+    """Return an Event as a dict for storage.
+
+    The names fields are written only for names events, so a yes/no event is
+    stored exactly as before they existed.
+    """
+    data = {
         "id": event.id, "group_id": event.group_id,
         "creator_id": event.creator_id, "title": event.title,
         "description": event.description,
@@ -116,10 +120,17 @@ def event_to_dict(event: Event) -> dict:
         "status": event.status, "outcome": event.outcome,
         "flags": list(event.flags),
     }
+    if event.kind == KIND_NAMES:
+        data.update({
+            "kind": event.kind,
+            "options": [{"id": option.id, "name": option.name} for option in event.options],
+            "multi_winner": event.multi_winner, "winners": list(event.winners),
+        })
+    return data
 
 
 def event_from_dict(data: dict) -> Event:
-    """Return an Event from a stored dict."""
+    """Return an Event from a stored dict; one without a kind is a yes/no event."""
     return Event(
         id=data["id"], group_id=data["group_id"],
         creator_id=data["creator_id"], title=data["title"],
@@ -127,6 +138,10 @@ def event_from_dict(data: dict) -> Event:
         close_time=text_to_time(data["close_time"]),
         status=data["status"], outcome=data["outcome"],
         flags=list(data["flags"]),
+        kind=data.get("kind", KIND_YES_NO),
+        options=[Option(id=o["id"], name=o["name"]) for o in data.get("options", [])],
+        multi_winner=data.get("multi_winner", False),
+        winners=list(data.get("winners", [])),
     )
 
 
