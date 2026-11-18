@@ -33,6 +33,7 @@ from src.convert import (
 )
 from src.models import (
     KIND_NAMES,
+    KIND_YES_NO,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
@@ -107,8 +108,9 @@ class EventSummary:
 class BetRecord:
     """One past or open bet of a user, with its event's title and result.
 
-    side_label is how the bet's side is shown (YES, NO or an option's name);
-    winner_label names the result once resolved ('YES', or 'Marta and João').
+    kind is the event's type; side_label is how the bet's side is shown (YES,
+    NO or an option's name); winner_label names the result once resolved
+    ('YES', or 'Marta and João').
     """
 
     bet: Bet
@@ -117,6 +119,7 @@ class BetRecord:
     outcome: Optional[str]
     side_label: str = ""
     winner_label: str = ""
+    kind: str = KIND_YES_NO
 
 
 @dataclass
@@ -247,33 +250,32 @@ def _bettors(state: _State, bets: List[Bet]) -> List[Bettor]:
     return bettors
 
 
-def _option_rows(event: Event, bets: List[Bet], user: User) -> List[OptionRow]:
+def _option_rows(event: Event, bets: List[Bet], user: User, total: Decimal) -> List[OptionRow]:
     """Return a names event's options with stake, odds, pool share and the user's stake."""
     stakes = betting.stake_per_option(bets, event)
-    total = betting.pool(bets)
-    rows = []
-    for option in event.options:
-        mine = sum((b.stake for b in bets if b.side == option.id and b.user_id == user.id),
-                   Decimal("0"))
-        rows.append(OptionRow(
-            id=option.id, name=option.name, stake=stakes[option.id],
-            odds=float(total / stakes[option.id]) if stakes[option.id] else None,
-            share=float(stakes[option.id] / total) if total else None,
-            my_stake=mine, won=option.id in event.winners,
-        ))
-    return rows
+    mine = {option_id: Decimal("0") for option_id in stakes}
+    for bet in bets:
+        if bet.user_id == user.id:
+            mine[bet.side] += bet.stake
+    return [
+        OptionRow(id=option.id, name=option.name, stake=stakes[option.id],
+                  odds=betting.odds_for(total, stakes[option.id]),
+                  share=betting.share_for(total, stakes[option.id]),
+                  my_stake=mine[option.id], won=option.id in event.winners)
+        for option in event.options
+    ]
 
 
 def _summarize_names(state: _State, event: Event, user: User, bets: List[Bet]) -> EventSummary:
     """Return the feed numbers for a names event: one row per option."""
-    resolved = event.status == STATUS_RESOLVED
+    total = betting.pool(bets)
+    rows = _option_rows(event, bets, user, total)
+    paid = betting.paid_odds(bets, event.winners) if event.status == STATUS_RESOLVED else None
     return EventSummary(
-        event=event, pool=betting.pool(bets), stake_yes=Decimal("0"), stake_no=Decimal("0"),
-        odds_yes=None, odds_no=None,
-        my_stake=sum((b.stake for b in bets if b.user_id == user.id), Decimal("0")),
+        event=event, pool=total, stake_yes=Decimal("0"), stake_no=Decimal("0"),
+        odds_yes=None, odds_no=None, my_stake=sum((row.my_stake for row in rows), Decimal("0")),
         creator_name=_username(state, event.creator_id), bettors=_bettors(state, bets),
-        options=_option_rows(event, bets, user),
-        paid_odds=betting.paid_odds(bets, event.winners) if resolved else None,
+        options=rows, paid_odds=paid,
     )
 
 
@@ -315,16 +317,18 @@ def _feed(state: _State, user: User) -> List[EventSummary]:
 
 def _bet_history(state: _State, user: User) -> List[BetRecord]:
     """Return the user's bets with their events' titles and results, newest event first."""
-    records = []
+    records, winners = [], {}
     for bet in state.bets:
         if bet.user_id != user.id:
             continue
         event = state.events[bet.event_id]
+        if event.id not in winners:
+            winners[event.id] = winner_label(event)
         records.append(BetRecord(
             bet=bet, event_title=event.title,
             event_status=event.status, outcome=event.outcome,
             side_label=betting.side_label(event, bet.side),
-            winner_label=winner_label(event),
+            winner_label=winners[event.id], kind=event.kind,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
@@ -469,6 +473,8 @@ def create_event(
         raise BettingError("Close time must be in the future.")
     if not isinstance(multi_winner, bool):
         raise BettingError("Choose one winner or several winners.")
+    if multi_winner and options is None:
+        raise BettingError("Several winners are only possible on a names event.")
     names = {}
     if options is not None:
         names = {"kind": KIND_NAMES, "options": betting.make_options(options),

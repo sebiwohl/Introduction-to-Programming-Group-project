@@ -325,13 +325,20 @@ def esc(text: str) -> str:
 MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$:])")
 
 
-def plain(text: str) -> str:
-    """Escape Markdown so user text shows literally in widget labels (radio, pills, checkboxes).
+AUTOLINK_START = re.compile(r"(?i)(\\:|@|www)")
+ZERO_WIDTH_SPACE = "\u200b"
 
-    Streamlit renders labels as Markdown, so a name like '[x](link)' would
-    otherwise become a link. HTML is never rendered there.
+
+def plain(text: str) -> str:
+    """Make user text show literally in Markdown: widget labels and st.error / st.success.
+
+    Streamlit renders those as Markdown, so a name like '[x](link)' would
+    otherwise become a link (HTML is never rendered there). Bare web and email
+    addresses would still turn into links, so an invisible zero-width space is
+    put after ':' and '@' and after 'www'.
     """
-    return MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
+    escaped = MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
+    return AUTOLINK_START.sub(lambda match: match.group(1) + ZERO_WIDTH_SPACE, escaped)
 
 
 def logo(height: int = 26) -> str:

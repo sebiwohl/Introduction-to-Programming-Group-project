@@ -5,7 +5,7 @@ options are names, such as people in the group) show one row per option
 instead, built from the same pieces and colours.
 """
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional
 
@@ -17,7 +17,7 @@ from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAU
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import nav, style
-from src.ui.actions import attempt
+from src.ui.actions import FLASH_KEY, attempt
 
 SIDES = (SIDE_YES, SIDE_NO)
 FILTER_KEY = "tabs_feed"
@@ -25,6 +25,18 @@ KIND_CHOICES = ("Yes / No", "Names")
 WINNER_CHOICES = ("One winner", "Several can win")
 SEVERAL_HELP = ("Several names can win. Everyone who backed a winning name shares the whole pool, "
                 "so a name's odds are the most it can pay: the more names win, the less each pays.")
+
+
+def _now() -> datetime:
+    """Return the current time.
+
+    The names bet form and the result picker are fragments: clicking in them
+    reruns only that part of the page, so the `now` of the last full page load
+    may be minutes old. Actions there read the clock when they happen, so a
+    bet placed after betting closed is still refused. The New event dialog is
+    a fragment too, so it checks the close time against this as well.
+    """
+    return datetime.now(timezone.utc)
 
 
 def bets_by_event(records: List[BetRecord]) -> Dict[str, List[BetRecord]]:
@@ -249,7 +261,7 @@ def _preview(summary: EventSummary, pick: Optional[str], amount: Decimal) -> str
 
 
 @st.fragment
-def _names_bet_form(user: User, summary: EventSummary, now: datetime) -> None:
+def _names_bet_form(user: User, summary: EventSummary) -> None:
     """Draw the name picker, the stake and the button for a names event, with a live preview.
 
     It is a fragment: picking a name or changing the stake reruns only this
@@ -271,7 +283,7 @@ def _names_bet_form(user: User, summary: EventSummary, now: datetime) -> None:
     if button_col.button("Place bet", key=f"pick_bet_{event.id}", type="primary",
                          width="stretch", disabled=pick is None):
         attempt(
-            lambda: service.place_bet(user.id, event.id, pick, amount, now),
+            lambda: service.place_bet(user.id, event.id, pick, amount, _now()),
             f"Bet placed: {style.money(amount)} on {style.plain(labels[pick])}.",
         )
         st.rerun()
@@ -279,7 +291,7 @@ def _names_bet_form(user: User, summary: EventSummary, now: datetime) -> None:
 
 @st.dialog("Set the result")
 def _confirm_result(user: User, event_id: str, title: str, winners: List[str],
-                    names: List[str], now: datetime) -> None:
+                    names: List[str]) -> None:
     """Ask 'Are you sure?' before the result of a names event is saved, as it cannot be undone."""
     won = service.join_names(names)
     style.show(
@@ -292,14 +304,14 @@ def _confirm_result(user: User, event_id: str, title: str, winners: List[str],
         st.rerun()
     if confirm_col.button("Yes, set the result", key="confirm_result", type="primary", width="stretch"):
         attempt(
-            lambda: service.resolve_names_event(user.id, event_id, winners, now),
+            lambda: service.resolve_names_event(user.id, event_id, winners, _now()),
             f"Result set: {style.plain(won)} won. Winners are paid out.",
         )
         st.rerun()
 
 
 @st.fragment
-def _names_resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
+def _names_resolve_row(user: User, summary: EventSummary) -> None:
     """Draw the winner picker of a closed names event: one choice, or ticks when several can win."""
     event = summary.event
     labels = {option.id: option.name for option in event.options}
@@ -317,7 +329,7 @@ def _names_resolve_row(user: User, summary: EventSummary, now: datetime) -> None
                        label_visibility="collapsed")
         picked = [one] if one else []
     if st.button("Set the result", key=f"names_result_{event.id}", type="primary", disabled=not picked):
-        _confirm_result(user, event.id, event.title, picked, [labels[i] for i in picked], now)
+        _confirm_result(user, event.id, event.title, picked, [labels[i] for i in picked])
 
 
 def _resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
@@ -343,10 +355,15 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
     with st.container(key=f"{prefix}_{event.id}"):
         style.show(_event_head(user, summary, records, biggest))
         names = betting.is_names_event(event)
-        if event.status == STATUS_OPEN:
-            (_names_bet_form if names else _bet_form)(user, summary, now)
+        if event.status == STATUS_OPEN and names:
+            _names_bet_form(user, summary)
+        elif event.status == STATUS_OPEN:
+            _bet_form(user, summary, now)
         elif event.status == STATUS_CLOSED and _may_resolve(user, summary):
-            (_names_resolve_row if names else _resolve_row)(user, summary, now)
+            if names:
+                _names_resolve_row(user, summary)
+            else:
+                _resolve_row(user, summary, now)
         _bets_panel(user, summary)
 
 
@@ -493,8 +510,9 @@ def new_event_dialog(user: User, now: datetime) -> None:
     names_event = kind == KIND_CHOICES[1]
     with st.form("create_event", border=False):
         example = "Who is going to show up late?" if names_event else "Will Ben finish the marathon?"
-        title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example)
-        description = st.text_area("Details (optional)",
+        title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example,
+                              key="new_event_title")  # the key keeps the text when the type changes
+        description = st.text_area("Details (optional)", key="new_event_details",
                                    max_chars=service.MAX_DESCRIPTION_LENGTH, height=80)
         if names_event:
             mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP)
@@ -511,9 +529,12 @@ def new_event_dialog(user: User, now: datetime) -> None:
             closes = datetime.combine(day, clock, tzinfo=style.APP_TIMEZONE)
             options = list(picked) + _typed_names(typed) if names_event else None
             several = names_event and mode == WINNER_CHOICES[1]
-            attempt(
-                lambda: service.create_event(user.id, title, closes, now, description,
+            if attempt(
+                lambda: service.create_event(user.id, title, closes, _now(), description,
                                              options=options, multi_winner=several),
                 "Event created.",
-            )
-            st.rerun()
+            ):
+                st.rerun()
+            # Keep the dialog open so nothing typed is lost. The message can quote a typed
+            # name, so Markdown in it is escaped.
+            st.error(style.plain(st.session_state.pop(FLASH_KEY, ("error", ""))[1]))

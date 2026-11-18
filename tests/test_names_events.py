@@ -64,6 +64,7 @@ def test_ten_options_of_forty_characters_are_allowed():
     ["Tiago", ""],                               # empty name
     ["Tiago", "   "],                            # only spaces
     ["Tiago", "x" * 41],                         # too long
+    ["Tiago", "Marta", "tiago"],                 # duplicate further down the list
     "Tiago, Marta",                              # not a list
     ["Tiago", 7],                                # not text
 ])
@@ -167,10 +168,16 @@ def test_several_winners_share_the_pool_by_stake():
 def test_payouts_add_up_to_the_pool_and_leftover_cents_go_to_the_biggest_stake():
     users = people(0, 0, 0, 0)
     bets = [bet("b1", "u1", "o1", 1), bet("b2", "u2", "o1", 2), bet("b3", "u3", "o1", 1),
-            bet("b4", "u4", "o2", 6)]
+            bet("b4", "u4", "o2", Decimal("6.01"))]
     resolve(names_event(), bets, ["o1"], users)
-    # 10 x 1/4 = 2.50, 10 x 2/4 = 5.00: exact; then a split with real leftovers:
-    assert sum(b.payout for b in bets) == Decimal("10")
+    # pool 10.01 split 1:2:1 -> 2.5025, 5.005, 2.5025: rounded down 2.50, 5.00, 2.50;
+    # the leftover cent goes to the biggest stake (b2)
+    assert [b.payout for b in bets] == [Decimal("2.50"), Decimal("5.01"), Decimal("2.50"),
+                                        Decimal("0.00")]
+    assert sum(b.payout for b in bets) == Decimal("10.01")
+
+
+def test_leftover_cents_go_to_the_first_bet_on_a_tie():
     users = people(0, 0, 0, 0)
     bets = [bet("b1", "u1", "o1", 1), bet("b2", "u2", "o1", 1), bet("b3", "u3", "o1", 1),
             bet("b4", "u4", "o2", 7)]
@@ -395,9 +402,9 @@ def path(tmp_path):
     return file
 
 
-def create(path, names=NAMES, multi=True):
+def create(path, names=NAMES, multi=True, close=CLOSE):
     """Create a names event as Ben and return it."""
-    return service.create_event("u2", "Who is going to show up later?", CLOSE, NOW, path=path,
+    return service.create_event("u2", "Who is going to show up later?", close, NOW, path=path,
                                 options=names, multi_winner=multi)
 
 
@@ -414,6 +421,18 @@ def test_create_names_event_rejects_bad_names_and_saves_nothing(path, names):
     before = storage.load_data(path)
     with pytest.raises(BettingError):
         create(path, names)
+    assert storage.load_data(path) == before
+
+
+def test_too_long_name_error_says_which_name():
+    with pytest.raises(BettingError, match="Maria Fernanda Albuq"):
+        betting.make_options(["Tiago", "Maria Fernanda Albuquerque dos Santos e Sousa"])
+
+
+def test_several_winners_without_names_is_rejected(path):
+    before = storage.load_data(path)
+    with pytest.raises(BettingError):
+        service.create_event("u2", "Will it rain?", CLOSE, NOW, path=path, multi_winner=True)
     assert storage.load_data(path) == before
 
 
@@ -450,6 +469,7 @@ def test_full_names_flow_with_two_winners(path):
     assert [o.won for o in done.options] == [False, True, True, False]
     history = service.bet_history("u3", path)
     assert history[0].side_label == "Tiago" and history[0].winner_label == "Marta and João"
+    assert history[0].kind == "names"
 
 
 def test_yes_no_event_still_resolves_exactly_as_before(path):
@@ -472,21 +492,21 @@ def test_names_event_needs_names_resolve(path):
 # --- stats, leaderboard and display -----------------------------------------------------
 
 def test_stats_and_leaderboard_with_a_mix_of_kinds(path):
-    names = create(path, multi=False)
+    names = create(path, multi=False, close=CLOSE + timedelta(hours=1))  # after e0, for the streak
     service.place_bet("u1", names.id, "o2", Decimal("10"), NOW, path)   # Anna: Marta (wins)
     service.place_bet("u2", names.id, "o1", Decimal("30"), NOW, path)   # Ben: Tiago (loses)
     service.place_bet("u1", "e0", "yes", Decimal("20"), NOW, path)      # Anna: YES (loses)
     service.place_bet("u3", "e0", "no", Decimal("20"), NOW, path)       # Cleo: NO (wins)
     service.resolve_event("u1", "e0", "no", AFTER, path)
-    service.resolve_names_event("u2", names.id, ["o2"], AFTER + timedelta(minutes=1), path)
-    page = service.page_data("u1", AFTER + timedelta(hours=1), path)
+    service.resolve_names_event("u2", names.id, ["o2"], AFTER + timedelta(hours=1), path)
+    page = service.page_data("u1", AFTER + timedelta(hours=2), path)
     member = stats.member_stats(page.events)
     assert (member["Anna"].right, member["Anna"].settled) == (1, 2)
     assert member["Anna"].best_odds == 4.0 and member["Anna"].streak == 1
     assert (member["Ben"].right, member["Ben"].settled, member["Ben"].streak) == (0, 1, -1)
     assert member["Cleo"].hit_rate == 1.0
-    board = [(r.username, r.balance) for r in page.leaderboard]
-    assert board == [("Anna", Decimal("110")), ("Cleo", Decimal("120"))][::-1] + [("Ben", Decimal("70"))]
+    board = [(r.rank, r.username, r.balance) for r in page.leaderboard]
+    assert board == [(1, "Cleo", Decimal("120")), (2, "Anna", Decimal("110")), (3, "Ben", Decimal("70"))]
     win = stats.latest_win(page.my_bets)
     assert win is not None and win.winner_label == "Marta"
     summary = next(s for s in page.events if s.event.id == names.id)
@@ -504,7 +524,7 @@ def summary_of(event, bets):
     bettors = [service.Bettor(b.user_id, b.side, b.stake) for b in bets]
     return service.EventSummary(event=event, pool=total, stake_yes=Decimal("0"), stake_no=Decimal("0"),
                                 odds_yes=None, odds_no=None, my_stake=Decimal("0"), bettors=bettors,
-                                options=rows, paid_odds=betting.paid_odds(bets, event.winners) or None)
+                                options=rows, paid_odds=betting.paid_odds(bets, event.winners))
 
 
 def test_everyone_on_winning_names_counts_as_refunded():
@@ -547,7 +567,11 @@ def test_option_names_are_escaped_everywhere_they_are_shown():
     row = style.option_row(nasty, 3.4, 0.25, Decimal("10"), 1, Decimal("0"), up_to=True)
     assert "<img" not in row and "&lt;img src=x onerror=alert(1)&gt;" in row
     assert "<small>up to</small> 3.40×" in row
-    assert style.plain("[x](http://evil.example) **b**") == r"\[x\]\(http\://evil\.example\) \*\*b\*\*"
+    z = "\u200b"  # zero-width space: stops bare addresses turning into links
+    assert style.plain("[x](http://evil.example) **b**") == (
+        rf"\[x\]\(http\:{z}//evil\.example\) \*\*b\*\*")
+    assert style.plain("ana@mail.example www.x.example") == rf"ana@{z}mail\.example www{z}\.x\.example"
+    assert style.plain("Marta") == "Marta"
 
 
 def test_option_row_without_bets_shows_dashes():
