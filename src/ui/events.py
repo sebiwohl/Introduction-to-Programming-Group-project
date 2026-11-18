@@ -11,11 +11,13 @@ from src.betting import BettingError
 from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, STATUS_RESOLVED, User
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
-from src.ui import nav, style
+from src.ui import confetti, nav, style
 from src.ui.actions import attempt
 
 SIDES = (SIDE_YES, SIDE_NO)
 FILTER_KEY = "tabs_feed"
+CONFETTI_SHOWN_KEY = "confetti_shown"  # bet ids that already had their confetti this session
+CONFETTI_PARAM = "confetti"  # add ?confetti to the address to see it on demand (for the demo)
 
 
 def bets_by_event(records: List[BetRecord]) -> Dict[str, List[BetRecord]]:
@@ -298,11 +300,25 @@ def _side_column(page: PageData, me: MemberStats) -> None:
     style.show(_nudge_card(page))
 
 
+def _confetti(page: PageData) -> str:
+    """Return confetti for the user's latest win, once per session (or once for ?confetti), else ''."""
+    if CONFETTI_PARAM in st.query_params:
+        del st.query_params[CONFETTI_PARAM]  # so it plays one time, not on every click
+        return confetti.markup()
+    shown = st.session_state.setdefault(CONFETTI_SHOWN_KEY, set())
+    bet_id = confetti.win_to_celebrate(page.my_bets, shown)
+    if bet_id is None:
+        return ""
+    shown.add(bet_id)
+    return confetti.markup()
+
+
 def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
     """Draw the Feed: group name, win banner, filter tabs and events; cards on the right."""
     style.show(style.heading(page.group.name, _feed_kicker(page.events)))
     left, right = st.columns([2.5, 1], gap="large")
     with left:
+        style.show(_confetti(page))
         style.show(_win_banner(page, me))
         choice = st.radio("Show", stats.FEED_FILTERS, horizontal=True, key=FILTER_KEY,
                           label_visibility="collapsed")
