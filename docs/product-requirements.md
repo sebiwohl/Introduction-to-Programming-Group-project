@@ -103,11 +103,11 @@ Methods considered and not chosen:
 
 ### 3.2 Core features (must have)
 - **Event feed:** a list of events in the user's groups, showing title, status, creator, close time, the pool, the stake on each side and the current odds. A timer shows the time left until betting closes; it refreshes every minute and turns red in the last 3 hours. "Closing soon" means betting closes within the next 3 hours.
-- **Create event:** title, optional details, a type and an event date, and when betting closes. "Betting closes" options: at the event start, 1 hour before, 1 day before, or custom (a day and an hour field). Betting always closes no later than the event date; there is no "never" option, because betting while the result is already known would give free profits. Types: yes / no, or over / under. For over / under the creator sets the line (a number) when creating the event; the line cannot change afterwards, and members bet on "over" or "under" that number.
-- **Place bet:** choose an event, a side and a stake. The stake must be a positive number and cannot exceed the balance, and the event must be open. A member may bet on both sides of the same event (to hedge).
+- **Create event:** title, optional details, a type and an event date, and when betting closes. "Betting closes" options: at the event start, 1 hour before, 1 day before, or custom (a day and an hour field). Betting always closes no later than the event date; there is no "never" option, because betting while the result is already known would give free profits. Types: yes / no, names, or over / under. For over / under the creator sets the line (a number) when creating the event; the line cannot change afterwards, and members bet on "over" or "under" that number. For names (for example "Who is going to show up later?") the creator lists 2 to 10 names: group members picked from a list and/or names typed in (trimmed, not empty, at most 40 characters, no duplicates ignoring case). The names cannot change after the event is created. The creator also chooses "one winner" or "several can win".
+- **Place bet:** choose an event, a side (or one name of a names event) and a stake. The stake must be a positive number and cannot exceed the balance, and the event must be open. A member may bet on both sides of the same event (to hedge), and on several names of a names event.
 - **Delete event:** the creator or the admin can delete an event up to 3 hours before betting closes. All stakes are refunded. After that, an event can only be removed by flag and poll.
 - **Live odds:** recalculated after every bet.
-- **Close and resolve:** after the close time the event is locked. After the event date, the creator or the admin (whoever is first) sets the outcome. Before it is saved, a popup asks "Are you sure? Resolving cannot be undone." There is no undo, so nobody can go back to old events later and change results to shift balances. Once the outcome is set, payouts are calculated. For over / under they type in the actual number: above the line means "over" wins, below means "under" wins, and exactly on the line refunds every stake.
+- **Close and resolve:** after the close time the event is locked. After the event date, the creator or the admin (whoever is first) sets the outcome. Before it is saved, a popup asks "Are you sure? Resolving cannot be undone." There is no undo, so nobody can go back to old events later and change results to shift balances. Once the outcome is set, payouts are calculated. For over / under they type in the actual number: above the line means "over" wins, below means "under" wins, and exactly on the line refunds every stake. For names they pick the winning name, or every winning name when several can win.
 - **Balance and history:** each user sees their balance and their past bets with results.
 - **Leaderboard:** members ranked by balance.
 
@@ -135,13 +135,14 @@ Methods considered and not chosen:
 - Winners split the whole pool in proportion to their stakes.
 - If nobody bet on the winning side, or only one side has bets, all stakes are refunded.
 - If an over / under result equals the line exactly, all stakes are refunded.
+- Names events use the same pool: odds for a name = pool / stake on that name, and its share of the pool is shown as a percentage. The whole pool is split between all bets on the winning name(s) in proportion to their stakes: payout = stake x pool / stake on all winning names. When several can win, a name's odds are the most it can pay, so the feed shows "up to". If nobody bet on a winning name, all stakes are refunded.
 - Amounts have 2 decimals. Each winner's share is rounded down to the cent, and the cents left over go to the winner with the biggest stake (on a tie, the bet placed first), so the payouts add up to the pool exactly.
 
 ### 3.6 Stretch features and ideas (only if time allows)
 - Personal statistics: win rate, total profit, biggest win.
 - Event comments.
 - Voting on the outcome of an event, in addition to the creator or admin setting it.
-- Bets with more than two outcomes. (Over / under is now a core feature, see 3.2; it uses the same two-sided pool.)
+- ~~Bets with more than two outcomes.~~ Now a core feature: names events (see 3.2). Over / under is also core and uses the same two-sided pool.
 
 ## 4. Data
 
@@ -152,7 +153,7 @@ Data is kept in the JSON format below, loaded at start-up and saved after every 
 
 All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 1) next to the `users`, `groups`, `events`, `bets` and `polls` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
 
-Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected.
+Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). An event without a `kind` is a yes / no event, so data saved before names events existed loads unchanged. A names event (`"kind": "names"`) must have 2 to 10 valid options, every bet on it must name one of its option ids, its `outcome` stays null, and its `winners` are set exactly when it is resolved (only one unless several can win). The names fields are not allowed on yes / no events. Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected.
 
 ### 4.2 Entities
 
@@ -187,8 +188,12 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | title, description | Text shown in the feed                              |
 | close_time         | When betting locks                                  |
 | status             | open, paused, closed, resolved, deleted             |
-| outcome            | yes, no, or empty until resolved                    |
+| outcome            | yes, no, or empty until resolved (always empty for names events) |
 | flags              | List of user ids who flagged it                     |
+| kind               | Only on names events: `names` (missing means yes / no) |
+| options            | Only on names events: 2 to 10 `{id, name}` objects, ids like `o1` |
+| multi_winner       | Only on names events: true if several names can win |
+| winners            | Only on names events: ids of the winning options, empty until resolved |
 
 **Bet**
 
@@ -197,7 +202,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | id       | Unique identifier                    |
 | event_id | Event bet on                         |
 | user_id  | Who placed it                        |
-| side     | yes or no                            |
+| side     | yes or no, or an option id of a names event |
 | stake    | Amount staked                        |
 | payout   | Amount paid out, empty until resolved |
 
@@ -303,6 +308,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Poll duration: 1 hour, or halfway to the betting close if that comes sooner.
 - Deleting an event: creator or admin, only more than 3 hours before betting closes, stakes refunded.
 - No bets on the winning side, or only one side has bets: refund all stakes.
+- Names events (bets on one of several names): in scope; 2 to 10 names, fixed once the event is created; one winner or several can win; the pool is split between the bets on the winning names, and if nobody backed a winner, all stakes are refunded.
 - Over / under bets: in scope; the creator sets the line when creating the event, and it cannot change. To resolve, the creator or admin types in the actual number; a result exactly on the line refunds every stake.
 - Betting on both sides of one event: allowed.
 - Pressing "Repaid": admin only.
