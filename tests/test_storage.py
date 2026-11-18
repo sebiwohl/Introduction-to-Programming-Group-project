@@ -719,3 +719,16 @@ def test_default_path_is_repo_data_file(monkeypatch: pytest.MonkeyPatch) -> None
     expected = Path(storage.__file__).resolve().parent.parent / "data" / "data.json"
     assert storage.DEFAULT_DATA_FILE == expected
     assert storage._resolve_path(None) == expected
+
+
+def test_user_avatar_is_optional_and_checked(tmp_path):
+    from src.models import AVATARS
+    assert set(AVATARS) == set(storage.RULES["users"]["avatar"][0].args[0])
+    data = build_valid_data()
+    assert "avatar" not in data["users"][0]
+    storage.validate(data)
+    data["users"][0]["avatar"] = "owl"
+    storage.validate(data)
+    data["users"][0]["avatar"] = "dragon"
+    with pytest.raises(StorageError, match="avatar"):
+        storage.validate(data)

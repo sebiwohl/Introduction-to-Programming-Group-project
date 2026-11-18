@@ -232,6 +232,14 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
 .ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
+.ci-profile {display: flex; align-items: center; gap: 16px; margin-top: 18px;}
+.ci-profile .ci-avatar {width: 64px; height: 64px; font-size: 1.6rem;}
+.ci-tiles + .ci-tiles-more {margin-top: -12px;}
+.ci-profile .ci-animal {background: var(--ci-soft); font-size: 2.3rem; border: 2px solid var(--ci-line);}
+.st-key-avatars button {padding: 2px 0 !important; min-height: 56px;}
+.st-key-avatars button p {font-size: 2rem !important; line-height: 1.2;}
+.ci-profile-name {font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em;
+  display: flex; align-items: center; gap: 8px;}
 
 @media (max-width: 760px) {
   .ci-h1 {font-size: 2.2rem;}
@@ -369,6 +377,17 @@ def avatar(name: str, is_me: bool = False) -> str:
     extra = " ci-avatar-me" if is_me else ""
     initial = esc(name[:1].upper() or "?")
     return f'<span class="ci-avatar{extra}" style="background:{colour}">{initial}</span>'
+
+
+ANIMALS = {"fox": "🦊", "panda": "🐼", "cat": "🐱", "dog": "🐶",
+           "frog": "🐸", "owl": "🦉", "rabbit": "🐰"}
+
+
+def profile_picture(name: str, animal: str) -> str:
+    """Return the big round profile picture: the chosen animal, or the initial if none."""
+    if animal in ANIMALS:
+        return f'<span class="ci-avatar ci-animal">{ANIMALS[animal]}</span>'
+    return avatar(name, True)
 
 
 def who(name: str, is_me: bool, is_admin: bool = False) -> str:

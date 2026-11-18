@@ -166,6 +166,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | group_id      | Group the user belongs to           |
 | role          | member or admin                     |
 | balance       | Current coins                       |
+| avatar        | Optional profile picture: fox, panda, cat, dog, frog, owl or rabbit (left out until the user picks one) |
 
 **Group**
 

@@ -69,12 +69,15 @@ def text_to_time(text: str) -> datetime:
 # --- users and groups -------------------------------------------------------
 
 def user_to_dict(user: User) -> dict:
-    """Return a User as a dict for storage."""
-    return {
+    """Return a User as a dict for storage; the avatar is left out until one is picked."""
+    data = {
         "id": user.id, "username": user.username,
         "password_hash": user.password_hash, "group_id": user.group_id,
         "role": user.role, "balance": money_to_cents(user.balance),
     }
+    if user.avatar:
+        data["avatar"] = user.avatar
+    return data
 
 
 def user_from_dict(data: dict) -> User:
@@ -83,6 +86,7 @@ def user_from_dict(data: dict) -> User:
         id=data["id"], username=data["username"],
         password_hash=data["password_hash"], group_id=data["group_id"],
         role=data["role"], balance=cents_to_money(data["balance"]),
+        avatar=data.get("avatar", ""),
     )
 
 

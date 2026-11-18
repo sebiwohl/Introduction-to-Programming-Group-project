@@ -167,3 +167,12 @@ def test_converted_records_pass_storage_validation():
     data["bets"] = [bet_to_dict(b) for b in bets]
     data["polls"] = [poll_to_dict(poll)]
     storage.validate(data)  # raises if anything does not match storage's rules
+
+
+def test_user_avatar_round_trips_and_is_left_out_when_empty():
+    from src.models import User
+    picked = User(id="u1", username="Anna", password_hash="h", avatar="fox")
+    plain = User(id="u2", username="Ben", password_hash="h")
+    assert user_from_dict(user_to_dict(picked)).avatar == "fox"
+    assert "avatar" not in user_to_dict(plain)
+    assert user_from_dict(user_to_dict(plain)).avatar == ""

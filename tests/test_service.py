@@ -345,3 +345,20 @@ def test_page_data_needs_aware_time(path):
     """A time without a timezone is rejected."""
     with pytest.raises(BettingError):
         service.page_data("u1", datetime(2026, 11, 20, 12, 0), path)
+
+
+def test_set_avatar_saves_the_choice(path):
+    service.set_avatar("u2", "panda", path)
+    assert service.get_user("u2", path).avatar == "panda"
+    assert service.get_user("u1", path).avatar == ""
+
+
+def test_set_avatar_rejects_unknown_picture(path):
+    with pytest.raises(BettingError):
+        service.set_avatar("u2", "dragon", path)
+    assert service.get_user("u2", path).avatar == ""
+
+
+def test_set_avatar_rejects_unknown_user(path):
+    with pytest.raises(BettingError):
+        service.set_avatar("nobody", "fox", path)
