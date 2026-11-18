@@ -14,7 +14,7 @@ import streamlit as st
 from src import service, stats, storage
 from src.betting import BettingError
 from src.service import PageData
-from src.ui import account, events, group, leaderboard, my_bets, nav, profile, style
+from src.ui import account, events, group, leaderboard, my_bets, nav, style
 from src.ui.actions import show_flash, timed
 
 
@@ -75,8 +75,6 @@ def show_app(page: PageData, now: datetime) -> None:
         my_bets.my_bets_page(page, me)
     elif choice == nav.LEADERBOARD:
         leaderboard.leaderboard_page(page, member)
-    elif choice == nav.PROFILE:
-        profile.profile_page(page, me)
     elif choice == nav.GROUP:
         group.group_page(page)
     else:
