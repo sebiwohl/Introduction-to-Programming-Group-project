@@ -48,8 +48,23 @@ def test_every_piece_has_fallen_before_the_layer_goes():
 
 
 def test_same_seed_gives_the_same_shower():
-    assert confetti.markup(3) == confetti.markup(3)
-    assert confetti.markup(3) != confetti.markup(4)
+    assert confetti.markup(seed=3) == confetti.markup(seed=3)
+    assert confetti.markup(seed=3) != confetti.markup(seed=4)
+
+
+def test_amount_won_is_shown_in_the_middle():
+    html = confetti.markup("+15")
+    assert '<div class="ci-cf-card"><span>YOU WON</span><b>+15</b><small>COINS</small></div>' in html
+    assert "\n" not in html
+
+
+def test_no_card_without_an_amount():
+    assert "ci-cf-card" not in confetti.markup().split("</style>")[1]
+
+
+def test_amount_is_escaped():
+    html = confetti.markup("<img src=x onerror=alert(1)>")
+    assert "<img" not in html and "&lt;img" in html
 
 
 def test_colours_come_from_the_palette():

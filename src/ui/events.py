@@ -18,6 +18,7 @@ SIDES = (SIDE_YES, SIDE_NO)
 FILTER_KEY = "tabs_feed"
 CONFETTI_SHOWN_KEY = "confetti_shown"  # bet ids that already had their confetti this session
 CONFETTI_PARAM = "confetti"  # add ?confetti to the address to see it on demand (for the demo)
+DEMO_WIN = Decimal("22")  # the amount ?confetti shows when the user has not won anything yet
 
 
 def bets_by_event(records: List[BetRecord]) -> Dict[str, List[BetRecord]]:
@@ -300,17 +301,27 @@ def _side_column(page: PageData, me: MemberStats) -> None:
     style.show(_nudge_card(page))
 
 
+def _amount_won(page: PageData) -> str:
+    """Return what the user's latest win made on top of the stake, like '+15' ('' if none)."""
+    record = stats.latest_win(page.my_bets)
+    return style.signed(record.bet.payout - record.bet.stake) if record else ""
+
+
 def _confetti(page: PageData) -> str:
-    """Return confetti for the user's latest win, once per session (or once for ?confetti), else ''."""
+    """Return confetti and the amount won for the user's latest win, once per session, else ''.
+
+    ?confetti in the address plays it once on demand (with a sample amount if
+    the user has no win yet), for the demo.
+    """
     if CONFETTI_PARAM in st.query_params:
         del st.query_params[CONFETTI_PARAM]  # so it plays one time, not on every click
-        return confetti.markup()
+        return confetti.markup(_amount_won(page) or style.signed(DEMO_WIN))
     shown = st.session_state.setdefault(CONFETTI_SHOWN_KEY, set())
     bet_id = confetti.win_to_celebrate(page.my_bets, shown)
     if bet_id is None:
         return ""
     shown.add(bet_id)
-    return confetti.markup()
+    return confetti.markup(_amount_won(page))
 
 
 def events_page(page: PageData, me: MemberStats, now: datetime) -> None:

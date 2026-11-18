@@ -1,4 +1,5 @@
-"""Confetti: a short shower over the screen when the user's latest bet won.
+"""Confetti: a short shower over the screen when the user's latest bet won,
+with the amount won in a small card in the middle ("YOU WON +15 COINS").
 
 Pure HTML and CSS (no JavaScript), built as one line so st.markdown passes it
 through. It sits on top of the page with pointer-events: none, so it never
@@ -8,6 +9,7 @@ their device for reduced motion get no confetti.
 No Streamlit here, so it can be tested on its own; events.py shows it.
 """
 
+import html
 import random
 from typing import Iterable, List, Optional
 
@@ -15,7 +17,7 @@ from src import stats
 from src.service import BetRecord
 
 PIECES = 90
-LENGTH = 3.6  # seconds until the last piece has fallen and the layer is gone
+LENGTH = 4.0  # seconds until the last piece has fallen and the layer is gone
 MAX_DELAY = 0.8  # pieces start within this many seconds, so it feels like one burst
 # The app's YES blue and NO orange, a gold and black, plus lighter versions.
 COLOURS = ("#3B3BE6", "#C8460F", "#FFC93C", "#0A0A0A", "#8C8CF5", "#F2A07A")
@@ -30,6 +32,17 @@ CSS = (
     "animation-fill-mode:both}"
     "@keyframes ci-cf-fall{0%{opacity:1;transform:translate(0,0) rotate(0) rotateY(0)}"
     "100%{opacity:1;transform:translate(var(--dx),106vh) rotate(var(--r)) rotateY(var(--f))}}"
+    # the amount won, in the black of the app's "You called it" banner
+    ".ci-cf-card{position:absolute;left:50%;top:40%;display:flex;flex-direction:column;"
+    "align-items:center;gap:4px;padding:18px 36px 16px;border-radius:18px;background:#0A0A0A;"
+    "color:#FFFFFF;box-shadow:0 18px 50px rgba(0,0,0,.25);white-space:nowrap;"
+    "font-family:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;"
+    f"animation:ci-cf-pop .45s cubic-bezier(.2,1.4,.4,1) both,ci-confetti-end {LENGTH}s linear forwards}}"
+    ".ci-cf-card span{font-size:.72rem;font-weight:700;letter-spacing:.1em;color:#9C9CF5}"
+    ".ci-cf-card b{font-size:3.2rem;font-weight:900;line-height:1;letter-spacing:-.02em}"
+    ".ci-cf-card small{font-size:.7rem;font-weight:700;letter-spacing:.08em}"
+    "@keyframes ci-cf-pop{from{opacity:0;transform:translate(-50%,-50%) scale(.6)}"
+    "to{opacity:1;transform:translate(-50%,-50%) scale(1)}}"
     "@media (prefers-reduced-motion:reduce){.ci-confetti{display:none}}"
 )
 
@@ -50,11 +63,17 @@ def _piece(rng: random.Random) -> str:
     )
 
 
-def markup(seed: int = 7) -> str:
-    """Return the confetti as one line of HTML with its own CSS (the same seed gives the same shower)."""
+def markup(won: str = "", seed: int = 7) -> str:
+    """Return the confetti as one line of HTML with its own CSS.
+
+    won is the amount won as text, like '+15'; it is shown in a card in the
+    middle (no card when it is empty). The same seed gives the same shower.
+    """
     rng = random.Random(seed)
     pieces = "".join(_piece(rng) for _ in range(PIECES))
-    return f'<style>{CSS}</style><div class="ci-confetti" aria-hidden="true">{pieces}</div>'
+    card = (f'<div class="ci-cf-card"><span>YOU WON</span><b>{html.escape(won)}</b>'
+            "<small>COINS</small></div>") if won else ""
+    return f'<style>{CSS}</style><div class="ci-confetti" aria-hidden="true">{card}{pieces}</div>'
 
 
 def win_to_celebrate(records: List[BetRecord], shown: Iterable[str]) -> Optional[str]:
