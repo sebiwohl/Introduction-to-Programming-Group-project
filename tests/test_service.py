@@ -362,3 +362,9 @@ def test_set_avatar_rejects_unknown_picture(path):
 def test_set_avatar_rejects_unknown_user(path):
     with pytest.raises(BettingError):
         service.set_avatar("nobody", "fox", path)
+
+
+def test_leaderboard_rows_carry_each_members_picture(path):
+    service.set_avatar("u2", "owl", path)
+    pictures = {r.username: r.avatar for r in service.leaderboard("u1", path)}
+    assert pictures == {"Anna": "", "Ben": "owl", "Cleo": ""}

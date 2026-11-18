@@ -9,6 +9,7 @@ from src.models import AVATARS, ROLE_ADMIN
 from src.service import LeaderboardRow, PageData
 from src.stats import MemberStats, ProfileStats
 from src.ui import style
+from src.ui.account import log_out
 from src.ui.actions import attempt
 
 
@@ -18,22 +19,36 @@ def _tile(label: str, value: str, note: str, extra: str = "") -> str:
             f'<div class="ci-big">{value}</div><div class="ci-muted">{note}</div></div>')
 
 
+EDITING_KEY = "editing_profile"
+
+
 def _identity(page: PageData, row: Optional[LeaderboardRow]) -> str:
-    """Return the card with the big avatar, username, role and group."""
+    """Return the big picture, username, role and group (the inside of the profile card)."""
     user = page.user
     is_admin = (row.is_admin if row is not None else user.role == ROLE_ADMIN)
     badge = style.admin_badge() if is_admin else ""
     role = "Group admin" if is_admin else "Member"
     return (
-        f'<div class="ci-card ci-profile">{style.profile_picture(user.username, user.avatar)}'
+        f'<div class="ci-profile">{style.avatar(user.username, True)}'
         f'<div><div class="ci-profile-name">{style.esc(user.username)}{badge}</div>'
         f'<div class="ci-muted">{role} of <b>{style.esc(page.group.name)}</b></div></div></div>'
     )
 
 
+def _toggle_editing() -> None:
+    """Open or close the profile editor."""
+    st.session_state[EDITING_KEY] = not st.session_state.get(EDITING_KEY, False)
+
+
+def _pick(user_id: str, animal: str) -> None:
+    """Save the chosen animal as the profile picture and close the editor if it worked."""
+    if attempt(lambda: service.set_avatar(user_id, animal), "Profile picture updated."):
+        st.session_state[EDITING_KEY] = False
+
+
 def _avatar_picker(page: PageData) -> None:
     """Draw the seven animal pictures; clicking one saves it as the profile picture."""
-    st.markdown('<div class="ci-label" style="margin:14px 0 6px">Profile picture</div>',
+    st.markdown('<div class="ci-label" style="margin:14px 0 6px">Choose your profile picture</div>',
                 unsafe_allow_html=True)
     with st.container(key="avatars"):
         columns = st.columns(len(AVATARS))
@@ -42,10 +57,24 @@ def _avatar_picker(page: PageData) -> None:
             column.button(
                 style.ANIMALS[animal], key=f"avatar_{animal}", help=animal.capitalize(),
                 type="primary" if chosen else "secondary", width="stretch",
-                on_click=attempt,
-                args=(lambda a=animal: service.set_avatar(page.user.id, a),
-                      "Profile picture updated."),
+                on_click=_pick, args=(page.user.id, animal),
             )
+
+
+def _profile_card(page: PageData, row: Optional[LeaderboardRow]) -> None:
+    """Draw the profile card with Edit profile and Log out in the corner, and the editor if open."""
+    editing = st.session_state.get(EDITING_KEY, False)
+    with st.container(key="card_profile"):
+        info_col, button_col = st.columns([4, 1])
+        style.show(where=info_col, markup=_identity(page, row))
+        button_col.button("Close" if editing else "Edit profile", key="edit_profile",
+                          icon=":material/close:" if editing else ":material/edit:",
+                          width="stretch", on_click=_toggle_editing)
+        if button_col.button("Log out", key="logout_profile", icon=":material/logout:",
+                             width="stretch"):
+            log_out()
+        if editing:
+            _avatar_picker(page)
 
 
 def _rank_note(page: PageData, row: LeaderboardRow) -> str:
@@ -133,6 +162,7 @@ def profile_page(page: PageData, me: MemberStats) -> None:
     row = stats.my_row(page.leaderboard, page.user.username)
     profile = stats.profile_stats(page.my_bets, page.events, page.user.id)
     style.show(style.heading("Profile", "Your account and your record in the group"))
-    style.show(_identity(page, row))
-    _avatar_picker(page)
+    st.write("")
+    _profile_card(page, row)
+    st.write("")
     style.show(_main_tiles(page, me, profile, row) + _more_tiles(page, me, profile))

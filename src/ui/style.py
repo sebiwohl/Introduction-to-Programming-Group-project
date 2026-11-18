@@ -232,11 +232,19 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
 .ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
-.ci-profile {display: flex; align-items: center; gap: 16px; margin-top: 18px;}
-.ci-profile .ci-avatar {width: 64px; height: 64px; font-size: 1.6rem;}
+.ci-profile {display: flex; align-items: center; gap: 16px;}
 .ci-tiles + .ci-tiles-more {margin-top: -12px;}
-.ci-profile .ci-animal {background: var(--ci-soft); font-size: 2.3rem; border: 2px solid var(--ci-line);}
+.ci-animal {background: var(--ci-soft) !important; font-size: 0.95rem; line-height: 1;}
+.ci-animal.ci-avatar-me {box-shadow: 0 0 0 2px var(--ci-ink);}
+.ci-profile .ci-avatar {width: 64px; height: 64px; font-size: 1.6rem;}
+.ci-profile .ci-animal {font-size: 2.3rem; box-shadow: none; border: 2px solid var(--ci-line);}
+.ci-podium .ci-animal {font-size: 1.4rem;}
+.st-key-card_profile [data-testid="stHorizontalBlock"] {align-items: center;}
 .st-key-avatars button {padding: 2px 0 !important; min-height: 56px;}
+.st-key-logout_profile button {background: #D92D20 !important; border-color: #D92D20 !important;
+  color: #FFFFFF !important;}
+.st-key-logout_profile button:hover {background: #B42318 !important; border-color: #B42318 !important;}
+.st-key-logout_profile button p, .st-key-logout_profile button span {color: #FFFFFF !important;}
 .st-key-avatars button p {font-size: 2rem !important; line-height: 1.2;}
 .ci-profile-name {font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em;
   display: flex; align-items: center; gap: 8px;}
@@ -371,23 +379,25 @@ def admin_badge() -> str:
     return f'<span class="ci-admin">{CROWN}ADMIN</span>'
 
 
-def avatar(name: str, is_me: bool = False) -> str:
-    """Return a round initial; the viewer's own is black, others get a fixed pastel."""
-    colour = AVATAR_COLOURS[sum(map(ord, name)) % len(AVATAR_COLOURS)]
-    extra = " ci-avatar-me" if is_me else ""
-    initial = esc(name[:1].upper() or "?")
-    return f'<span class="ci-avatar{extra}" style="background:{colour}">{initial}</span>'
-
-
 ANIMALS = {"fox": "🦊", "panda": "🐼", "cat": "🐱", "dog": "🐶",
            "frog": "🐸", "owl": "🦉", "rabbit": "🐰"}
+PICTURES_KEY = "pictures"
 
 
-def profile_picture(name: str, animal: str) -> str:
-    """Return the big round profile picture: the chosen animal, or the initial if none."""
+def remember_pictures(pictures: dict) -> None:
+    """Keep this run's username -> chosen animal map, so avatar() can draw them."""
+    st.session_state[PICTURES_KEY] = pictures
+
+
+def avatar(name: str, is_me: bool = False) -> str:
+    """Return a round initial; the viewer's own is black, others get a fixed pastel."""
+    extra = " ci-avatar-me" if is_me else ""
+    animal = st.session_state.get(PICTURES_KEY, {}).get(name)
     if animal in ANIMALS:
-        return f'<span class="ci-avatar ci-animal">{ANIMALS[animal]}</span>'
-    return avatar(name, True)
+        return f'<span class="ci-avatar ci-animal{extra}">{ANIMALS[animal]}</span>'
+    colour = AVATAR_COLOURS[sum(map(ord, name)) % len(AVATAR_COLOURS)]
+    initial = esc(name[:1].upper() or "?")
+    return f'<span class="ci-avatar{extra}" style="background:{colour}">{initial}</span>'
 
 
 def who(name: str, is_me: bool, is_admin: bool = False) -> str:

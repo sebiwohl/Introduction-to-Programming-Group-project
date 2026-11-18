@@ -67,6 +67,7 @@ def show_app(page: PageData, now: datetime) -> None:
     if page.group is None:
         account.group_page(page.user)
         return
+    style.remember_pictures({r.username: r.avatar for r in page.leaderboard})
     member = stats.member_stats(page.events)
     me = member.get(page.user.username, stats.MemberStats())
     choice = nav.top_bar(page, me, lambda: events.new_event_dialog(page.user, now))
