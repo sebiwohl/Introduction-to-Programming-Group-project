@@ -12,15 +12,17 @@ import hashlib
 import hmac
 import secrets
 import uuid
+from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from src import storage
 from src.betting import BettingError, can_access_event
 from src.convert import (
-    find_membership, group_from_dict, group_to_dict, membership_to_dict, user_from_dict,
-    user_to_dict,
+    find_membership, group_from_dict, group_to_dict, membership_from_dict, membership_to_dict,
+    user_from_dict, user_to_dict,
 )
+from src.notifications import add_notification
 from src.models import CENT, ROLE_ADMIN, ROLE_MEMBER, Event, Group, Membership, User
 
 # Password hashing. The iteration count is stored inside each hash, so it can be
@@ -51,9 +53,10 @@ RESOLVE_EVENT = "resolve_event"
 OPEN_POLL = "open_poll"
 DELETE_EVENT = "delete_event"
 MANAGE_MEMBERS = "manage_members"
+TRANSFER_ADMIN = "transfer_admin"
 
 MEMBER_ACTIONS = {VIEW_FEED, CREATE_EVENT, PLACE_BET, FLAG_EVENT, VOTE_POLL}
-ADMIN_ONLY_ACTIONS = {OPEN_POLL, DELETE_EVENT, MANAGE_MEMBERS}
+ADMIN_ONLY_ACTIONS = {OPEN_POLL, DELETE_EVENT, MANAGE_MEMBERS, TRANSFER_ADMIN}
 
 
 class AuthError(BettingError):
@@ -168,13 +171,19 @@ def log_in(username: str, password: str, path=None) -> User:
 
 # --- groups -------------------------------------------------------------------
 
-def _add_membership(data: dict, user_id: str, group_id: str, role: str, balance: Decimal) -> None:
-    """Store a new membership for the user, unless they are already in a group.
+def _group_membership(data: dict, user_id: str, group_id: str) -> Optional[dict]:
+    """Return the user's stored membership in this group, or None."""
+    return next((m for m in data["memberships"]
+                 if m["user_id"] == user_id and m["group_id"] == group_id), None)
 
-    Version 1 rule, kept until several groups per user are built: one group only.
+
+def _add_membership(data: dict, user_id: str, group_id: str, role: str, balance: Decimal) -> None:
+    """Store a new membership for the user, unless they are already in this group.
+
+    A user can be in several groups (requirements 2.3), but only once in each.
     """
-    if find_membership(data["memberships"], user_id) is not None:
-        raise AuthError("You are already in a group.")
+    if _group_membership(data, user_id, group_id) is not None:
+        raise AuthError("You are already in this group.")
     membership = Membership(id=uuid.uuid4().hex, user_id=user_id, group_id=group_id,
                             role=role, balance=balance)
     data["memberships"].append(membership_to_dict(membership))
@@ -197,7 +206,7 @@ def create_group(
 ) -> Group:
     """Create a group, make the user its admin and give them the start balance.
 
-    A user can be in one group only (version 1), so they must not have one yet.
+    The user may already be in other groups.
     """
     if not isinstance(name, str) or not name.strip():
         raise AuthError("Group name cannot be empty.")
@@ -224,19 +233,62 @@ def join_group(user_id: str, invite_code: str, path=None) -> Group:
     """Add the user to the group with this invite code as a member.
 
     The code ignores case and surrounding spaces. The new member gets the
-    group's start balance.
+    group's start balance. The user may already be in other groups, but not
+    in this one.
     """
     code = invite_code.strip().upper() if isinstance(invite_code, str) else ""
     with storage.transaction(path) as data:
         _find_user(data, user_id)
-        if find_membership(data["memberships"], user_id) is not None:
-            raise AuthError("You are already in a group.")
         group = next((g for g in data["groups"] if g["invite_code"] == code), None)
         if group is None:
             raise AuthError("No group has that invite code.")
         joined = group_from_dict(group)
         _add_membership(data, user_id, joined.id, ROLE_MEMBER, joined.start_balance)
     return joined
+
+
+def user_groups(user_id: str, path=None) -> List[Tuple[Group, Membership]]:
+    """Return each group the user is in with their membership, sorted by group name."""
+    data = storage.load_data(path)
+    groups = {g["id"]: group_from_dict(g) for g in data["groups"]}
+    pairs = [(groups[m["group_id"]], membership_from_dict(m))
+             for m in data["memberships"] if m["user_id"] == user_id]
+    return sorted(pairs, key=lambda pair: (pair[0].name.casefold(), pair[0].id))
+
+
+def _user_in_group(data: dict, user_id: str, group_id: str) -> User:
+    """Return the user with their group, role and balance in this group.
+
+    A group the user is not in is reported as not found, so its id reveals nothing.
+    """
+    membership = _group_membership(data, user_id, group_id)
+    if membership is None:
+        raise AuthError("Group not found.")
+    return user_from_dict(_find_user(data, user_id), membership)
+
+
+def hand_over_admin(
+    admin_id: str, group_id: str, new_admin_id: str, now: datetime, path=None
+) -> None:
+    """Make another member of the group its admin; the old admin becomes a member.
+
+    Only the group's admin may do this (requirements 2.1 and 2.2). The new
+    admin gets a notification.
+    """
+    with storage.transaction(path) as data:
+        admin = _user_in_group(data, admin_id, group_id)
+        require_permission(admin, TRANSFER_ADMIN)
+        if new_admin_id == admin_id:
+            raise AuthError("You are already the admin.")
+        new_membership = _group_membership(data, new_admin_id, group_id)
+        if new_membership is None:
+            raise AuthError("The new admin must be a member of this group.")
+        _group_membership(data, admin_id, group_id)["role"] = ROLE_MEMBER
+        new_membership["role"] = ROLE_ADMIN
+        group = next(g for g in data["groups"] if g["id"] == group_id)
+        group["admin_id"] = new_admin_id
+        add_notification(data, new_admin_id, group_id,
+                         f"You are now the admin of {group['name']}.", now)
 
 
 # --- permissions --------------------------------------------------------------

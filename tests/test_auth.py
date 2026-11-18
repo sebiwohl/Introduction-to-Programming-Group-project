@@ -162,11 +162,12 @@ def test_create_group_rejects_bad_start_balance(path, balance):
         auth.create_group(anna.id, "Friends", balance, path)
 
 
-def test_cannot_create_second_group(path):
+def test_can_create_second_group(path):
+    """Requirement 2.3: a user can be in several groups (replaces the one-group rule)."""
     anna = auth.sign_up("Anna", PASSWORD, path)
-    auth.create_group(anna.id, "Friends", path=path)
-    with pytest.raises(AuthError, match="already in a group"):
-        auth.create_group(anna.id, "More friends", path=path)
+    first = auth.create_group(anna.id, "Friends", path=path)
+    second = auth.create_group(anna.id, "More friends", path=path)
+    assert {g.id for g, _ in auth.user_groups(anna.id, path)} == {first.id, second.id}
 
 
 def test_join_group_with_code_as_member(path):
@@ -186,12 +187,14 @@ def test_join_group_rejects_unknown_code(path, code):
         auth.join_group(ben.id, code, path)
 
 
-def test_cannot_join_while_in_a_group(path):
+def test_can_join_while_in_another_group_but_not_twice(path):
+    """Requirement 2.3: joining another group is allowed; the same group twice is not."""
     anna = auth.sign_up("Anna", PASSWORD, path)
     first = auth.create_group(anna.id, "Friends", path=path)
     dan = auth.sign_up("Dan", PASSWORD, path)
     auth.create_group(dan.id, "Others", path=path)
-    with pytest.raises(AuthError, match="already in a group"):
+    auth.join_group(dan.id, first.invite_code, path)
+    with pytest.raises(AuthError, match="already in this group"):
         auth.join_group(dan.id, first.invite_code, path)
 
 
