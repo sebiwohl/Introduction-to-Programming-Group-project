@@ -13,6 +13,14 @@ SIDE_YES = "yes"
 SIDE_NO = "no"
 SIDES = (SIDE_YES, SIDE_NO)
 
+# Event types. A yes/no event has the two sides above; a names event has its
+# own options (people's names, for example), and bets name one of them.
+KIND_YES_NO = "yes_no"
+KIND_NAMES = "names"
+MIN_OPTIONS = 2
+MAX_OPTIONS = 10
+MAX_OPTION_LENGTH = 40
+
 ROLE_MEMBER = "member"
 ROLE_ADMIN = "admin"
 
@@ -50,8 +58,21 @@ class Group:
 
 
 @dataclass
+class Option:
+    """One answer of a names event, like 'Marta'. Bets refer to it by id."""
+
+    id: str
+    name: str
+
+
+@dataclass
 class Event:
-    """Something the group bets on. Outcome is None until resolved."""
+    """Something the group bets on. Outcome is None until resolved.
+
+    A names event (kind KIND_NAMES) has options instead of yes and no. Its
+    winners are the ids of the winning options, set when it is resolved (its
+    outcome stays None). With multi_winner, more than one option can win.
+    """
 
     id: str
     group_id: str
@@ -62,11 +83,15 @@ class Event:
     status: str = STATUS_OPEN
     outcome: Optional[str] = None
     flags: list = field(default_factory=list)
+    kind: str = KIND_YES_NO
+    options: list = field(default_factory=list)
+    multi_winner: bool = False
+    winners: list = field(default_factory=list)
 
 
 @dataclass
 class Bet:
-    """A stake placed by a user on one side of an event."""
+    """A stake placed by a user on one side of an event (or one option of a names event)."""
 
     id: str
     event_id: str
