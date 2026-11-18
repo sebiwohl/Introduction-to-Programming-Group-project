@@ -44,21 +44,51 @@ Two roles. The admin also acts as the moderator.
 | Place a bet               | Yes                     | Yes        |
 | Flag an event             | Yes                     | Yes        |
 | Vote in a poll            | Yes                     | Yes        |
-| Resolve events            | Creator only (decision) | All events |
+| Resolve events (after the event date) | Own events  | All events |
 | Open a poll directly      | No                      | Yes        |
-| Delete an event           | Only via poll           | Yes        |
-| Invite and remove members | No                      | Yes        |
+| Delete an event           | Own events, more than 3 hours before betting closes; otherwise only via poll | Any event, same 3-hour rule |
+| Invite and remove members | No                      | Yes (remove only members with no open bets and a result of 0) |
+| Restrict a member's betting | No                    | Yes        |
+| Top up all balances       | No                      | Yes        |
+| Show repayment, press "Repaid" | Show only          | Yes        |
+| Hand over the admin role  | No                      | Yes        |
+| Leave a group             | Yes (see 2.4)           | Yes, same rules, after choosing a new admin |
+| Delete the group          | No                      | Only as the last member |
 
 ### 2.2 Groups
 - The person who creates a group becomes its admin.
-- The admin invites friends. Suggested method: a short invite code that new members enter (decision).
-- Each member starts with the same balance, for example 1,000 coins. The admin can set it when creating the group (decision).
-- If the admin leaves, they must first hand the role to another member (decision).
-- When a member is removed, their open bets are refunded (decision).
+- The admin invites friends with a short invite code that new members enter.
+- Every member, the admin included, joins with a balance of 0; there is no starting balance. Once everyone has joined, the admin tops up everyone at once, and then betting can start (see 2.4).
+- The admin can hand the role to another member at any time. The admin can leave under the same rules as any member (see 2.4), and must first choose the new admin; the new admin gets a notification. If the admin is the last member, there is nobody to choose, so instead the admin can delete the group.
+- The admin can only remove a member who has no open bets and whose result this period is exactly 0: no debt and no winnings (balance equal to the top-ups they received this period, see 2.4).
+- If the member still has open bets, the admin restricts their betting first. A restricted member can only view: they cannot bet, create events, flag or vote until the admin lifts the restriction. Once their open bets are resolved, their real result shows. If it is 0, they can be removed straight away; if they have debt or winnings, a repayment is needed first, and after it they can be removed.
 
 ### 2.3 Accounts
 - A user has a unique username and a password (see section 5).
-- A user belongs to one group in the first version. Multiple groups is a stretch goal.
+- A user can belong to several groups. They have a separate balance and role in each group. The feed and "My bets" show all their groups; the leaderboard is per group.
+
+### 2.4 Balances
+Decided method: everyone starts at 0, with top-ups and repayments.
+
+- **Joining:** every member joins with a balance of 0, whenever they join. The admin waits until everyone has joined, then tops up everyone at once, and betting can start.
+- **Creating events is blocked** for each member whose balance is 0. In a new group that is everyone until the first top-up; later it is only the members who are at 0. They see the note "Top-up required before creating events" until the admin has topped up.
+- A balance never goes below 0, so nobody can bet more than they have.
+- **Running low:** when a member's balance falls below 10% of the last top-up amount (for example below 50 after a top-up of 500), the admin gets a notification and chooses a top-up or a repayment.
+- **Top-up:** only the admin can top up, and chooses the amount each time. Every member of the group always gets the same amount, new members included. There are no top-ups for single members, so the differences between members stay the same.
+- **Repayment:** a window shows who is up and who is down compared with what they were given this period (all top-ups they received), with simplified transfers and a copy button for the group chat. Opening and closing the window changes nothing. The real repayment happens outside the app, so no real money goes through the app.
+- **Repaid:** only the admin can confirm it, in the repayment window, and must enter a top-up amount above 0 in the same step. All balances go back to 0, a new period starts, and everyone is topped up at once, so betting can continue.
+- **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. Their stakes were already taken from the old period's balance, and their payouts or refunds land in the new period.
+- **Stats:** shown for "This period" (since the last repayment) and "All time".
+- **Debt:** a member has debt when their balance is lower than the top-ups they received this period, so they are down. Right after a repayment nobody has debt.
+- **Leaving:** possible at any time when the member has no debt and no open bets. Otherwise an error message says why.
+- **Joining mid-period:** a member who joins later also starts at 0 and can bet only after the admin's next top-up, which every member gets.
+
+Methods considered and not chosen:
+
+| Method | Why not |
+| ------ | ------- |
+| Start at 0 and let balances go negative | Members could bet without limit, and desperation bets become likely. A limit and a top-up would still be needed, and someone below 0 could only leave by betting back up, which takes luck. |
+| Fixed starting balance with no top-up or repayment (the first version) | Members who run out can no longer play. |
 
 ## 3. Features
 
@@ -72,11 +102,12 @@ Two roles. The admin also acts as the moderator.
 7. The leaderboard shows everyone's balance.
 
 ### 3.2 Core features (must have)
-- **Event feed:** a list of events in the group, showing title, status, close time, the pool, the stake on each side and the current odds.
-- **Create event:** title, optional description, two sides (yes / no), and a close time.
-- **Place bet:** choose an event, a side and a stake. The stake must be a positive number and cannot exceed the balance, and the event must be open.
+- **Event feed:** a list of events in the user's groups, showing title, status, creator, close time, the pool, the stake on each side and the current odds. A timer shows the time left until betting closes; it refreshes every minute and turns red in the last 3 hours. "Closing soon" means betting closes within the next 3 hours.
+- **Create event:** title, optional details, a type and an event date, and when betting closes. "Betting closes" options: at the event start, 1 hour before, 1 day before, or custom (a day and an hour field). Betting always closes no later than the event date; there is no "never" option, because betting while the result is already known would give free profits. Types: yes / no, or over / under. For over / under the creator sets the line (a number) when creating the event; the line cannot change afterwards, and members bet on "over" or "under" that number.
+- **Place bet:** choose an event, a side and a stake. The stake must be a positive number and cannot exceed the balance, and the event must be open. A member may bet on both sides of the same event (to hedge).
+- **Delete event:** the creator or the admin can delete an event up to 3 hours before betting closes. All stakes are refunded. After that, an event can only be removed by flag and poll.
 - **Live odds:** recalculated after every bet.
-- **Close and resolve:** after the close time the event is locked. The outcome is then set and payouts are calculated.
+- **Close and resolve:** after the close time the event is locked. After the event date, the creator or the admin (whoever is first) sets the outcome. Before it is saved, a popup asks "Are you sure? Resolving cannot be undone." There is no undo, so nobody can go back to old events later and change results to shift balances. Once the outcome is set, payouts are calculated. For over / under they type in the actual number: above the line means "over" wins, below means "under" wins, and exactly on the line refunds every stake.
 - **Balance and history:** each user sees their balance and their past bets with results.
 - **Leaderboard:** members ranked by balance.
 
@@ -84,7 +115,7 @@ Two roles. The admin also acts as the moderator.
 
 | State    | Meaning                                   | Allowed         |
 | -------- | ----------------------------------------- | --------------- |
-| Open     | Accepting bets                            | Bet, flag, view |
+| Open     | Accepting bets                            | Bet, flag, view; delete by creator or admin more than 3 hours before betting closes |
 | Paused   | A poll is running                         | View, vote      |
 | Closed   | Past the close time, waiting for a result | View            |
 | Resolved | Outcome set, payouts done                 | View            |
@@ -92,23 +123,25 @@ Two roles. The admin also acts as the moderator.
 
 ### 3.4 Moderation by poll
 - Any member can flag an event they think is fishy. One flag per member per event.
-- When a set percentage of members have flagged it (decision, suggested 30% with a minimum of 2 flags), a poll opens automatically and betting on that event is paused.
+- When 25% of the group's members (at least 2) have flagged it, a poll opens automatically and betting on that event is paused.
+- If the flags alone are already more than 50% of the members (for example 2 flags in a group of 3), the event is deleted straight away without a poll, and all stakes are refunded.
 - The admin can also open a poll directly at any time, without the flag threshold.
 - All members can vote "delete" or "keep" in the poll. Each member has one vote.
-- The poll runs for a set time (decision, e.g. 24 hours).
-- When it ends: if more than 50% of the votes cast are "delete", the event is deleted and every stake is refunded. Otherwise the event stays, the flags are cleared, and betting resumes. A tie means the event stays.
+- The poll runs 1 hour. If betting closes sooner than that, the poll ends halfway to the close time (for example 30 minutes when 1 hour is left), so it never runs into the deadline.
+- When it ends: if more than 50% of the votes cast are "delete", the event is deleted and every stake is refunded. Otherwise the event stays, the flags are cleared, and betting resumes. A tie means the event stays. If nobody votes, the poll closes as "keep" and betting resumes.
+- Restricted members (see 2.2) do not count as members for the 25% and 50% flag thresholds.
 
 ### 3.5 Payout rules
 - Winners split the whole pool in proportion to their stakes.
-- If nobody bet on the winning side, or only one side has bets, all stakes are refunded (decision).
-- Amounts are rounded to 2 decimals, or to whole coins. Where any leftover amount goes needs to be defined (decision).
+- If nobody bet on the winning side, or only one side has bets, all stakes are refunded.
+- If an over / under result equals the line exactly, all stakes are refunded.
+- Amounts have 2 decimals. Each winner's share is rounded down to the cent, and the cents left over go to the winner with the biggest stake (on a tie, the bet placed first), so the payouts add up to the pool exactly.
 
 ### 3.6 Stretch features and ideas (only if time allows)
 - Personal statistics: win rate, total profit, biggest win.
 - Event comments.
-- Multiple groups per user.
 - Voting on the outcome of an event, in addition to the creator or admin setting it.
-- Other types of bets, such as over/under or multiple outcomes. Odds calculation might differ from the yes/no pool model.
+- Bets with more than two outcomes. (Over / under is now a core feature, see 3.2; it uses the same two-sided pool.)
 
 ## 4. Data
 
@@ -220,10 +253,10 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 
 ### 5.3 Fair play
 - One flag per member per event, and one vote per member per poll.
-- No bets after an event is closed or paused.
+- No bets after an event is closed or paused. Betting on both sides of an event is allowed.
 - The creator cannot silently change the outcome after it is resolved, so resolved events are read-only.
 - Abuse of events is handled by the poll process. Abuse by the admin is a limit of the design, since the admin has full control, and the group should agree to trust them.
-- Whether the creator may bet on their own event is open (decision).
+- The creator may bet on their own event. The group can flag the event if this looks unfair.
 
 ### 5.4 Input validation
 - Stakes must be positive numbers within the balance.
@@ -238,16 +271,42 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Anyone with the database connection string (or access to the local data file) could edit the data directly. The app's own rules only protect actions taken through the app.
 - A free Supabase project pauses after a week without activity and has no automatic backups; the app keeps its own 20 backups in the database.
 - There is no encryption of stored data and no recovery of lost passwords in the first version.
+- An event that the creator and the admin never resolve stays unresolved: its stakes stay locked, and members with bets on it cannot leave or be removed until it is resolved.
+- A wrong result cannot be corrected, because resolving cannot be undone. The group has to trust the creator and the admin, as with other admin actions (5.3).
 
-## 6. Open decisions (collected)
-- Who resolves events: creator only, or also by group vote (stretch).
-- Invite method: short invite code (suggested).
-- Starting balance: e.g. 1,000 coins, set by the admin.
-- Admin leaving: must hand over the role first.
-- Removed member: open bets refunded.
-- Flag threshold for auto-poll: suggested 30%, minimum 2 flags.
-- Poll duration: e.g. 24 hours.
+## 6. Decisions
+
+### 6.1 Decided
+- Who resolves events: the creator or the admin, whoever is first, after the event date.
+- "Betting closes" options: at the event start, 1 hour before, 1 day before, or custom (day and hour). No "never" option; betting closes no later than the event date.
+- Invite method: short invite code.
+- Starting balance: none; everyone starts at 0, also after each repayment.
+- Balances: start at 0, with top-ups and repayments (section 2.4).
+- Top-up amount: chosen by the admin each time.
+- Repaid: confirmed by the admin in the repayment window, together with a top-up amount above 0 (any amount; it does not need to cover open stakes, since stakes are taken when a bet is placed); balances go back to 0 and everyone is topped up in the same step. Open bets carry over into the new period.
+- Creating events: blocked for each member whose balance is 0 (in a new group, everyone until the first top-up).
+- Low balance: below 10% of the last top-up amount; the admin is notified.
+- Rounding: 2 decimals, each share rounded down to the cent; leftover cents go to the winner with the biggest stake (on a tie, the bet placed first).
+- The creator may bet on their own event.
+- Admin leaving: same rules as any member, and the admin chooses the new admin first; the new admin is notified. The admin can also hand the role over at any time.
+- Leaving a group: at any time with no debt and no open bets; otherwise an error message.
+- Joining: every member, the admin included, joins with 0. The note "Top-up required before creating events" is shown until the admin tops up everyone at once; then betting starts. Members who join later also start at 0 and wait for the next top-up.
+- Top-ups: always the same amount for every member; no top-ups for single members.
+- Removing a member: only with no open bets and a result of exactly 0 (no debt, no winnings). If they still have open bets, the admin restricts their betting first; once their open bets are resolved, they are removed straight away if their result is 0, or after the next repayment if they have debt or winnings.
+- Restricted member: can only view; cannot bet, create events, flag or vote, and does not count for the flag thresholds.
+- Admin as the last member: can delete the group instead of choosing a new admin.
+- Poll with no votes: closes as "keep" and betting resumes.
+- Resolving: a popup asks "Are you sure? Resolving cannot be undone." There is no undo.
+- Unresolved events: stay unresolved, with no automatic refund (a known limit, 5.6).
+- Multiple groups per user: in scope, with a balance and role per group.
+- Flag threshold for auto-poll: 25% of members, minimum 2 flags. If the flags are already more than 50% of the members, the event is deleted without a poll.
+- Poll duration: 1 hour, or halfway to the betting close if that comes sooner.
+- Deleting an event: creator or admin, only more than 3 hours before betting closes, stakes refunded.
 - No bets on the winning side, or only one side has bets: refund all stakes.
-- Rounding (2 decimals or whole coins) and where leftover amounts go.
-- May the creator bet on their own event?
-- Are other bet types (over/under, multiple outcomes) in scope?
+- Over / under bets: in scope; the creator sets the line when creating the event, and it cannot change. To resolve, the creator or admin types in the actual number; a result exactly on the line refunds every stake.
+- Betting on both sides of one event: allowed.
+- Pressing "Repaid": admin only.
+- Timer: refreshes every minute; red and "Closing soon" in the last 3 hours.
+
+### 6.2 Still open
+- Nothing open at the moment.
