@@ -57,7 +57,8 @@ MANAGE_MEMBERS = "manage_members"
 TRANSFER_ADMIN = "transfer_admin"
 
 MEMBER_ACTIONS = {VIEW_FEED, CREATE_EVENT, PLACE_BET, FLAG_EVENT, VOTE_POLL}
-ADMIN_ONLY_ACTIONS = {OPEN_POLL, DELETE_EVENT, MANAGE_MEMBERS, TRANSFER_ADMIN}
+ADMIN_ONLY_ACTIONS = {OPEN_POLL, MANAGE_MEMBERS, TRANSFER_ADMIN}
+CREATOR_OR_ADMIN_ACTIONS = {RESOLVE_EVENT: "resolve", DELETE_EVENT: "delete"}
 
 
 class AuthError(BettingError):
@@ -303,9 +304,11 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
     """Raise AuthError unless the user may do `action` (requirements 2.1).
 
     Every action needs a group. When an event is given, it must be in one of
-    the user's groups. Resolving is allowed for the event's creator and the
-    group admin; open_poll, delete_event, manage_members and transfer_admin are
-    admin-only. A restricted member may only view (requirements 2.2).
+    the user's groups. Resolving and deleting an event are allowed for its
+    creator and the group admin; open_poll, manage_members and transfer_admin
+    are admin-only. A restricted member may only view (requirements 2.2).
+    Time limits (such as deleting only more than 3 hours before betting closes)
+    are checked where the action happens.
     """
     if not user.group_id:
         raise AuthError("Join or create a group first.")
@@ -315,12 +318,13 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
         raise AuthError(RESTRICTED)
     if action in MEMBER_ACTIONS:
         return
-    if action == RESOLVE_EVENT:
+    if action in CREATOR_OR_ADMIN_ACTIONS:
+        verb = CREATOR_OR_ADMIN_ACTIONS[action]
         if event is None:
-            raise AuthError("Resolving needs an event.")
+            raise AuthError(f"Needs an event to {verb}.")
         if user.id == event.creator_id or is_group_admin(user, event.group_id):
             return
-        raise AuthError("Only the creator or the group admin can resolve this event.")
+        raise AuthError(f"Only the creator or the group admin can {verb} this event.")
     if action in ADMIN_ONLY_ACTIONS:
         group_id = event.group_id if event is not None else user.group_id
         if is_group_admin(user, group_id):

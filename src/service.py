@@ -8,7 +8,7 @@ All rule violations raise BettingError with a message the UI can show.
 Times passed in (`now`, `close_time`) must be timezone-aware.
 
 Permissions come from auth.require_permission(). Accounts and groups live in
-auth.py. Not here yet: moderation (flags and polls).
+auth.py; deleting events, flags and polls in moderation.py (refresh() ends due polls).
 """
 
 import uuid
@@ -17,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from src import auth, betting, storage
+from src import auth, betting, moderation, storage
 from src.betting import BettingError
 from src.convert import (
     bet_from_dict,
@@ -317,16 +317,22 @@ def _open_bet_counts(state: _State) -> Dict[str, int]:
 
 # --- public functions -------------------------------------------------------
 
-def refresh(now: datetime, path=None) -> int:
-    """Close every open event past its close time; return how many were closed.
+def _needs_refresh(state: _State, now: datetime) -> bool:
+    """Return True if a poll has ended or an open event is past its close time."""
+    return moderation.polls_due(state.polls, now) or _close_expired(state, now) > 0
 
-    Call when a page opens. Saves only if something changed, so viewing pages
-    does not create a new backup each time.
+
+def refresh(now: datetime, path=None) -> int:
+    """End due polls, then close every open event past its close time.
+
+    Returns how many events were closed. Call when a page opens. Saves only if
+    something changed, so viewing pages does not create a new backup each time.
     """
     _require_aware(now, "now")
-    if _close_expired(_load(path), now) == 0:
+    if not _needs_refresh(_load(path), now):
         return 0
     with storage.transaction(path) as data:
+        moderation.end_due_polls(data, now)
         state = _unpack(data)
         closed = _close_expired(state, now)
         _pack(state, data)
@@ -358,7 +364,7 @@ def page_data(user_id: str, now: datetime, path=None) -> PageData:
     """
     _require_aware(now, "now")
     state = _load(path)
-    if _close_expired(state, now):
+    if _needs_refresh(state, now):
         refresh(now, path)
         state = _load(path)
     user = _get_user(state, user_id)
