@@ -15,9 +15,9 @@ from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Dict, List, Optional
 
+from src import betting
 from src.models import (
     CENT,
-    KIND_NAMES,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
@@ -72,7 +72,14 @@ def call_result(side: str, outcome: str, stake_yes: Decimal, stake_no: Decimal) 
 
 def _is_names(summary: EventSummary) -> bool:
     """Return True if the summary is of a names event."""
-    return summary.event.kind == KIND_NAMES
+    return betting.is_names_event(summary.event)
+
+
+def _side_stake(summary: EventSummary, side: str) -> Decimal:
+    """Return the total stake on one side, or on one option of a names event."""
+    if _is_names(summary):
+        return next((o.stake for o in summary.options if o.id == side), Decimal("0"))
+    return summary.stake_yes if side == SIDE_YES else summary.stake_no
 
 
 def names_call_result(side: str, summary: EventSummary) -> str:
@@ -172,10 +179,7 @@ def estimated_profit(stake: Decimal, summary: EventSummary, side: str) -> Option
     None if nobody backed that side. Only an estimate while betting is open
     (on a names event where several can win, it is the most it could win).
     """
-    if _is_names(summary):
-        side_stake = next((o.stake for o in summary.options if o.id == side), Decimal("0"))
-    else:
-        side_stake = summary.stake_yes if side == SIDE_YES else summary.stake_no
+    side_stake = _side_stake(summary, side)
     if side_stake == 0:
         return None
     payout = stake * summary.pool / side_stake
@@ -192,11 +196,7 @@ def payout_preview(stake: Decimal, summary: EventSummary, side: str) -> Optional
     """
     if stake <= 0:
         return None
-    if _is_names(summary):
-        side_stake = next((o.stake for o in summary.options if o.id == side), Decimal("0"))
-    else:
-        side_stake = summary.stake_yes if side == SIDE_YES else summary.stake_no
-    payout = stake * (summary.pool + stake) / (side_stake + stake)
+    payout = stake * (summary.pool + stake) / (_side_stake(summary, side) + stake)
     return payout.quantize(CENT, rounding=ROUND_DOWN)
 
 

@@ -188,16 +188,45 @@ def _check_bets_belong(event: Event, bets: List[Bet], users: Dict[str, User]) ->
             raise BettingError(f"Unknown user {bet.user_id} on bet {bet.id}.")
 
 
+def _refund_all(bets: List[Bet]) -> List[Decimal]:
+    """Return every bet's stake as its payout (a full refund)."""
+    return [Decimal(bet.stake).quantize(CENT) for bet in bets]
+
+
+def _winners_split(bets: List[Bet], winning_sides: set) -> List[Decimal]:
+    """Return one payout per bet: the bets on winning_sides split the whole pool, the rest get 0.
+
+    There must be at least one bet on a winning side (split_pool's rule).
+    """
+    winners = [bet for bet in bets if bet.side in winning_sides]
+    shares = iter(split_pool(pool(bets), [bet.stake for bet in winners]))
+    zero = Decimal("0").quantize(CENT)
+    return [next(shares) if bet.side in winning_sides else zero for bet in bets]
+
+
+def _settle(bets: List[Bet], payouts: List[Decimal], users: Dict[str, User]) -> Decimal:
+    """Check that the payouts add up to the pool, then pay them out; return the total.
+
+    Sets Bet.payout and credits each user's balance. Nothing changes if the
+    total is wrong (a safety net; it should never happen).
+    """
+    total_paid = sum(payouts, Decimal("0"))
+    if total_paid != pool(bets):
+        raise BettingError("Payouts do not add up to the pool; nothing was paid.")
+    for bet, payout in zip(bets, payouts):
+        bet.payout = payout
+        user = users[bet.user_id]
+        user.balance = Decimal(user.balance) + payout
+    return total_paid
+
+
 def _compute_payouts(bets: List[Bet], outcome: str) -> List[Decimal]:
     """Return one payout per bet: refunds, or winners splitting the pool."""
     totals = stake_per_side(bets)
     only_one_side = any(stake == 0 for stake in totals.values())
     if only_one_side:  # also covers "nobody backed the winner" and no bets
-        return [Decimal(bet.stake).quantize(CENT) for bet in bets]
-    winners = [bet for bet in bets if bet.side == outcome]
-    winner_payouts = iter(split_pool(pool(bets), [bet.stake for bet in winners]))
-    zero = Decimal("0").quantize(CENT)
-    return [next(winner_payouts) if bet.side == outcome else zero for bet in bets]
+        return _refund_all(bets)
+    return _winners_split(bets, {outcome})
 
 
 def resolve_event(
@@ -222,15 +251,7 @@ def resolve_event(
     _check_resolvable(event, now)
     _check_side(outcome)
     _check_bets_belong(event, bets, users)
-
-    payouts = _compute_payouts(bets, outcome)
-    total_paid = sum(payouts, Decimal("0"))
-    if total_paid != pool(bets):  # safety net; should never happen
-        raise BettingError("Payouts do not add up to the pool; nothing was paid.")
-    for bet, payout in zip(bets, payouts):
-        bet.payout = payout
-        user = users[bet.user_id]
-        user.balance = Decimal(user.balance) + payout
+    total_paid = _settle(bets, _compute_payouts(bets, outcome), users)
     event.outcome = outcome
     event.status = STATUS_RESOLVED
     return total_paid
@@ -259,8 +280,10 @@ def clean_options(names: List[str]) -> List[str]:
         )
     if not all(cleaned):
         raise BettingError("Names cannot be empty.")
-    if any(len(name) > MAX_OPTION_LENGTH for name in cleaned):
-        raise BettingError(f"Names can be at most {MAX_OPTION_LENGTH} characters.")
+    too_long = next((name for name in cleaned if len(name) > MAX_OPTION_LENGTH), None)
+    if too_long is not None:
+        raise BettingError(f"“{too_long[:20]}…” is too long: names can be at most "
+                           f"{MAX_OPTION_LENGTH} characters.")
     seen = set()
     for name in cleaned:
         if name.casefold() in seen:
@@ -297,23 +320,32 @@ def stake_per_option(bets: List[Bet], event: Event) -> Dict[str, Decimal]:
     return totals
 
 
-def option_odds(bets: List[Bet], event: Event, option_id: str) -> Optional[float]:
-    """Return pool / stake on one option for display, or None if nobody backed it."""
+def odds_for(total_pool: Decimal, side_stake: Decimal) -> Optional[float]:
+    """Return pool / stake on one side or option for display, or None if nobody backed it."""
+    return float(total_pool / side_stake) if side_stake else None
+
+
+def share_for(total_pool: Decimal, side_stake: Decimal) -> Optional[float]:
+    """Return the share of the pool on one side or option (0 to 1), or None with an empty pool."""
+    return float(side_stake / total_pool) if total_pool else None
+
+
+def _option_stake(bets: List[Bet], event: Event, option_id: str) -> Decimal:
+    """Return the total stake on one option, or raise BettingError for an unknown option."""
     stakes = stake_per_option(bets, event)
     if option_id not in stakes:
         raise BettingError("Unknown option.")
-    if stakes[option_id] == 0:
-        return None
-    return float(pool(bets) / stakes[option_id])
+    return stakes[option_id]
+
+
+def option_odds(bets: List[Bet], event: Event, option_id: str) -> Optional[float]:
+    """Return pool / stake on one option for display, or None if nobody backed it."""
+    return odds_for(pool(bets), _option_stake(bets, event, option_id))
 
 
 def pool_share(bets: List[Bet], event: Event, option_id: str) -> Optional[float]:
     """Return the share of the pool on one option (0 to 1), or None while there are no bets."""
-    stakes = stake_per_option(bets, event)
-    if option_id not in stakes:
-        raise BettingError("Unknown option.")
-    total = pool(bets)
-    return float(stakes[option_id] / total) if total else None
+    return share_for(pool(bets), _option_stake(bets, event, option_id))
 
 
 def paid_odds(bets: List[Bet], winners: List[str]) -> Optional[float]:
@@ -344,12 +376,9 @@ def names_payouts(bets: List[Bet], winners: List[str]) -> List[Decimal]:
     the same rounding rule as yes/no (split_pool). If nobody bet on a winning
     option, every stake is refunded.
     """
-    winning = [bet for bet in bets if bet.side in winners]
-    if not winning:
-        return [Decimal(bet.stake).quantize(CENT) for bet in bets]
-    shares = iter(split_pool(pool(bets), [bet.stake for bet in winning]))
-    zero = Decimal("0").quantize(CENT)
-    return [next(shares) if bet.side in winners else zero for bet in bets]
+    if not any(bet.side in winners for bet in bets):
+        return _refund_all(bets)
+    return _winners_split(bets, set(winners))
 
 
 def resolve_names_event(
@@ -372,14 +401,7 @@ def resolve_names_event(
     chosen = _check_winners(event, winners)
     _check_bets_belong(event, bets, users)
     stake_per_option(bets, event)  # every bet must be on one of the options
-    payouts = names_payouts(bets, chosen)
-    total_paid = sum(payouts, Decimal("0"))
-    if total_paid != pool(bets):  # safety net; should never happen
-        raise BettingError("Payouts do not add up to the pool; nothing was paid.")
-    for bet, payout in zip(bets, payouts):
-        bet.payout = payout
-        user = users[bet.user_id]
-        user.balance = Decimal(user.balance) + payout
+    total_paid = _settle(bets, names_payouts(bets, chosen), users)
     event.winners = chosen
     event.status = STATUS_RESOLVED
     return total_paid
