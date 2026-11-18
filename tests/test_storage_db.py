@@ -492,3 +492,34 @@ def test_failed_transaction_leaves_connection_usable(db):
             data["memberships"][1]["balance"] = 1
             raise ValueError("rule broken")
     assert storage.load_data() == sample_data()
+
+
+# --- schema version 1 data in the database -------------------------------------
+
+@needs_db
+def test_version_1_row_is_upgraded_and_saved_as_version_2(db):
+    """An old row loads in the new format; the next save writes version 2 and backs up version 1."""
+    from src.migration import upgrade
+    from tests.test_migration import version_1_data
+
+    write_raw(version_1_data())
+    assert storage.load_data() == upgrade(version_1_data())
+    with storage.transaction():
+        pass
+    assert run_sql("SELECT data->>'schema_version' FROM app_data") == [("2",)]
+    assert run_sql("SELECT data->>'schema_version' FROM app_data_backups") == [("1",)]
+
+
+@needs_db
+def test_version_1_backup_restores_in_the_new_format(db):
+    """Recovery can use a backup saved before the upgrade."""
+    from src.migration import upgrade
+    from tests.test_migration import version_1_data
+
+    write_raw(version_1_data())
+    with storage.transaction():
+        pass  # the version 1 row becomes a backup
+    write_raw({"broken": True})
+    data, warning = storage.load_with_recovery()
+    assert warning is not None
+    assert data == upgrade(version_1_data())
