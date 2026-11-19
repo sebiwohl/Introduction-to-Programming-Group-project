@@ -118,7 +118,8 @@ class BetRecord:
 
     event_type is the event's type; side_label is how the bet's side is shown
     (YES, NO or an option's name); winner_label names the result once resolved
-    ('YES', or 'Marta and João').
+    ('YES', or 'Marta and João'). group_id is the event's group, as a user's
+    bets come from all their groups.
     """
 
     bet: Bet
@@ -128,6 +129,7 @@ class BetRecord:
     side_label: str = ""
     winner_label: str = ""
     event_type: str = TYPE_YES_NO
+    group_id: str = ""
 
 
 @dataclass
@@ -162,14 +164,36 @@ class _State:
     polls: List[Poll]
 
 
-def _unpack(data: dict) -> _State:
+def _membership_in(memberships: List[dict], user_id: str, group_id: Optional[str]):
+    """Return the user's membership in group_id, else their first one (or None)."""
+    if group_id is not None:
+        for membership in memberships:
+            if membership["user_id"] == user_id and membership["group_id"] == group_id:
+                return membership
+    return find_membership(memberships, user_id)
+
+
+def _member_of(data: dict, user_id: str, group_id: Optional[str]) -> bool:
+    """Return True if the user has a membership in the group."""
+    return any(m["user_id"] == user_id and m["group_id"] == group_id for m in data["memberships"])
+
+
+def _event_group(data: dict, event_id: str) -> Optional[str]:
+    """Return the group of a stored event, or None if there is no such event."""
+    return next((e["group_id"] for e in data["events"] if e["id"] == event_id), None)
+
+
+def _unpack(data: dict, group_id: Optional[str] = None) -> _State:
     """Convert the stored dicts into dataclasses.
 
-    Each user gets the group, role and balance of their membership.
+    Each user gets the group, role and balance of their membership in group_id
+    (a user can be in several groups), or of their first membership if they are
+    not in it. Actions on an event pass the event's group, pages the chosen one,
+    so balances always change in the right group.
     """
     memberships = data["memberships"]
     return _State(
-        users={u["id"]: user_from_dict(u, find_membership(memberships, u["id"]))
+        users={u["id"]: user_from_dict(u, _membership_in(memberships, u["id"], group_id))
                for u in data["users"]},
         groups={g["id"]: group_from_dict(g) for g in data["groups"]},
         events={e["id"]: event_from_dict(e) for e in data["events"]},
@@ -179,9 +203,13 @@ def _unpack(data: dict) -> _State:
 
 
 def _pack_balances(state: _State, data: dict) -> None:
-    """Write each user's role and balance back into their stored membership."""
+    """Write each user's role and balance back into their membership in user.group_id.
+
+    That is the group _unpack gave them, so a change made in a user's second
+    group lands in that group, never in their first one.
+    """
     for user in state.users.values():
-        membership = find_membership(data["memberships"], user.id)
+        membership = _membership_in(data["memberships"], user.id, user.group_id)
         if membership is not None and membership["group_id"] == user.group_id:
             membership["role"] = user.role
             membership["balance"] = money_to_cents(user.balance)
@@ -197,9 +225,9 @@ def _pack(state: _State, data: dict) -> None:
     data["polls"] = [poll_to_dict(p) for p in state.polls]
 
 
-def _load(path) -> _State:
-    """Load the data read-only and convert it."""
-    return _unpack(storage.load_data(path))
+def _load(path, group_id: Optional[str] = None) -> _State:
+    """Load the data read-only and convert it (see _unpack for group_id)."""
+    return _unpack(storage.load_data(path), group_id)
 
 
 # --- checks -------------------------------------------------------------------
@@ -360,6 +388,7 @@ def _bet_history(state: _State, user: User) -> List[BetRecord]:
             event_status=event.status, outcome=event.outcome,
             side_label=betting.side_label(event, bet.side),
             winner_label=winners[event.id], event_type=event.event_type,
+            group_id=event.group_id,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
@@ -391,7 +420,7 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
         return []
     members = [u for u in state.users.values() if u.group_id == user.group_id]
     members.sort(key=lambda u: (-u.balance, u.username.casefold()))
-    open_bets = _open_bet_counts(state)
+    open_bets = _open_bet_counts(state, user.group_id)
     stakes = _open_stake_totals(state, user.group_id)
     rows, rank, previous = [], 0, None
     for position, member in enumerate(members, start=1):
@@ -419,13 +448,14 @@ def _open_stake_totals(state: _State, group_id: str) -> Dict[str, Decimal]:
     return totals
 
 
-def _open_bet_counts(state: _State) -> Dict[str, int]:
-    """Count each user's bets that are not settled yet (open, paused or closed event)."""
+def _open_bet_counts(state: _State, group_id: str) -> Dict[str, int]:
+    """Count each user's bets in the group that are not settled yet (open, paused or closed)."""
     unsettled = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
     counts: Dict[str, int] = {}
     for bet in state.bets:
         event = state.events.get(bet.event_id)
-        if event is not None and event.status in unsettled and bet.payout is None:
+        if (event is not None and event.group_id == group_id and event.status in unsettled
+                and bet.payout is None):
             counts[bet.user_id] = counts.get(bet.user_id, 0) + 1
     return counts
 
@@ -483,25 +513,33 @@ class PageData:
     leaderboard: List[LeaderboardRow]
     new_wins: List[NewWin] = field(default_factory=list)
     notifications: List[Notification] = field(default_factory=list)
+    groups: List[Group] = field(default_factory=list)
 
 
-def page_data(user_id: str, now: datetime, path=None) -> PageData:
+def page_data(user_id: str, now: datetime, path=None,
+              group_id: Optional[str] = None) -> PageData:
     """Return the user, group, feed, own bets and leaderboard from a single load.
 
     The UI calls this once per page view instead of five separate functions, so
     the database is read once per click. If a poll has ended or an open event is
     past its close time, that is saved first (rare), and the data is read again.
+    group_id is the group the user chose; if they are not in it (any more),
+    their first group is shown. groups lists all their groups for the switcher.
     """
     _require_aware(now, "now")
     data = storage.load_data(path)
-    state = _unpack(data)
+    chosen = group_id if _member_of(data, user_id, group_id) else None
+    state = _unpack(data, chosen)
     if _needs_refresh(state, now):
         refresh(now, path)
         data = storage.load_data(path)
-        state = _unpack(data)
+        state = _unpack(data, chosen)
     user = _get_user(state, user_id)
+    mine = {m["group_id"] for m in data["memberships"] if m["user_id"] == user_id}
     return PageData(
         user=user,
+        groups=sorted((g for g in state.groups.values() if g.id in mine),
+                      key=lambda g: (g.name.casefold(), g.id)),
         group=state.groups.get(user.group_id) if user.group_id else None,
         events=_feed(state, user),
         my_bets=_bet_history(state, user),
@@ -531,8 +569,12 @@ def create_event(
     multi_winner: bool = False,
     line=None,
     event_time: Optional[datetime] = None,
+    group_id: Optional[str] = None,
 ) -> Event:
     """Create an event in the user's group and return it.
+
+    group_id picks one of the user's groups (a user can be in several);
+    without it, their first group. A group they are not in is not found.
 
     Without options or line it is a yes/no event. With a line (a number with at
     most 2 decimals) it is an over/under event: members bet over or under it,
@@ -573,7 +615,9 @@ def create_event(
     if line is not None:
         names = {"event_type": TYPE_OVER_UNDER, "line": betting.clean_number(line, "line")}
     with storage.transaction(path) as data:
-        state = _unpack(data)
+        if group_id is not None and not _member_of(data, user_id, group_id):
+            raise BettingError("Group not found.")
+        state = _unpack(data, group_id)
         user = _get_user(state, user_id)
         auth.require_permission(user, auth.CREATE_EVENT)
         event = Event(
@@ -600,7 +644,8 @@ def feed(user_id: str, now: datetime, path=None) -> List[EventSummary]:
 def event_details(user_id: str, event_id: str, now: datetime, path=None) -> EventSummary:
     """Return one event with its numbers, if the user may see it."""
     refresh(now, path)
-    state = _load(path)
+    data = storage.load_data(path)
+    state = _unpack(data, _event_group(data, event_id))
     user = _get_user(state, user_id)
     event = _get_event_for(state, user, event_id)
     if event.status == STATUS_DELETED:
@@ -617,7 +662,7 @@ def place_bet(
     """
     _require_aware(now, "now")
     with storage.transaction(path) as data:
-        state = _unpack(data)
+        state = _unpack(data, _event_group(data, event_id))
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
@@ -639,7 +684,7 @@ def resolve_event(
     """
     _require_aware(now, "now")
     with storage.transaction(path) as data:
-        state = _unpack(data)
+        state = _unpack(data, _event_group(data, event_id))
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
@@ -662,7 +707,7 @@ def resolve_over_under(
     """
     _require_aware(now, "now")
     with storage.transaction(path) as data:
-        state = _unpack(data)
+        state = _unpack(data, _event_group(data, event_id))
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
@@ -685,7 +730,7 @@ def resolve_names_event(
     """
     _require_aware(now, "now")
     with storage.transaction(path) as data:
-        state = _unpack(data)
+        state = _unpack(data, _event_group(data, event_id))
         _close_expired(state, now)
         user = _get_user(state, user_id)
         event = _get_event_for(state, user, event_id)
@@ -698,9 +743,9 @@ def resolve_names_event(
     return total
 
 
-def group_member_names(user_id: str, path=None) -> List[str]:
-    """Return the usernames in the user's group, sorted by name (for quick names options)."""
-    state = _load(path)
+def group_member_names(user_id: str, path=None, group_id: Optional[str] = None) -> List[str]:
+    """Return the usernames in the user's group (or in group_id, if they are in it), sorted."""
+    state = _load(path, group_id)
     user = _get_user(state, user_id)
     if not user.group_id:
         return []

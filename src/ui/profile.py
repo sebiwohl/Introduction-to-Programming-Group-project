@@ -1,16 +1,26 @@
-"""The Profile page: who you are, your coins, your place in the ranking and your betting stats."""
+"""The Profile page: who you are, your coins, your place in the ranking and your betting stats.
 
+The stats are shown for one group at a time (a dropdown above them). At the
+bottom you can create or join another group.
+"""
+
+from dataclasses import replace
+from datetime import datetime, timezone
 from typing import Optional
 
 import streamlit as st
 
 from src import service, stats
+from src.betting import BettingError
 from src.models import AVATARS, ROLE_ADMIN
 from src.service import LeaderboardRow, PageData
 from src.stats import MemberStats, ProfileStats
+from src.storage import StorageError
 from src.ui import style
-from src.ui.account import log_out
+from src.ui.account import create_group_form, join_group_form, log_out
 from src.ui.actions import attempt
+
+STATS_GROUP_KEY = "profile_stats_group"  # the group the Profile stats are shown for
 
 
 def _tile(order: int, label: str, value: str, note: str, extra: str = "") -> str:
@@ -161,12 +171,53 @@ def _more_tiles(page: PageData, me: MemberStats, profile: ProfileStats) -> str:
     )
 
 
+def _stats_group(page: PageData) -> PageData:
+    """Draw the group dropdown above the stats and return the page data for the chosen group.
+
+    It starts on the group shown everywhere else; picking another one loads
+    that group's figures once (the rest of the app stays on its group).
+    """
+    names = {group.id: group.name for group in page.groups}
+    if st.session_state.get(STATS_GROUP_KEY) not in names:
+        st.session_state[STATS_GROUP_KEY] = page.group.id
+    label_col, box_col, _ = st.columns([1, 2.6, 5], vertical_alignment="center")
+    style.show(where=label_col, markup='<div class="ci-label">Stats for</div>')
+    chosen = box_col.selectbox("Stats for", list(names), key=STATS_GROUP_KEY,
+                               format_func=names.get, label_visibility="collapsed")
+    if chosen == page.group.id:
+        return page
+    try:
+        return service.page_data(page.user.id, datetime.now(timezone.utc), group_id=chosen)
+    except (BettingError, StorageError) as error:
+        st.error(str(error))
+        return page
+
+
+def _more_groups(page: PageData) -> None:
+    """Draw the forms to create or join another group (a user can be in several), always open."""
+    style.show('<div class="ci-label" style="margin-top:8px">Create or join another group</div>')
+    st.caption("You can be in several groups, each with its own balance. "
+               "Switch between them with the Group dropdown at the top.")
+    create_col, join_col = st.columns(2, gap="medium")
+    with create_col:
+        create_group_form(page.user)
+    with join_col:
+        join_group_form(page.user)
+
+
 def profile_page(page: PageData, me: MemberStats) -> None:
-    """Draw the Profile page."""
-    row = stats.my_row(page.leaderboard, page.user.username)
-    profile = stats.profile_stats(page.my_bets, page.events, page.user.id)
-    style.show(style.heading("Profile", "Your account and your record in the group"))
+    """Draw the Profile page: the card, then the stats of the chosen group, then more groups."""
+    style.show(style.heading("Profile", "Your account and your record in each group"))
     st.write("")
-    _profile_card(page, row)
+    _profile_card(page, stats.my_row(page.leaderboard, page.user.username))
     st.write("")
-    style.show(_main_tiles(page, me, profile, row) + _more_tiles(page, me, profile))
+    shown = _stats_group(page)
+    if shown is not page:
+        me = stats.member_stats(shown.events).get(shown.user.username, MemberStats())
+    # only this group's bets, so every tile (including coins in play) counts the same ones
+    shown = replace(shown, my_bets=[r for r in shown.my_bets if r.group_id == shown.group.id])
+    row = stats.my_row(shown.leaderboard, shown.user.username)
+    profile = stats.profile_stats(shown.my_bets, shown.events, shown.user.id)
+    style.show(_main_tiles(shown, me, profile, row) + _more_tiles(shown, me, profile))
+    st.write("")
+    _more_groups(page)

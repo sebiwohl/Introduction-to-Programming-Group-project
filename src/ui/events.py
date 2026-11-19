@@ -791,9 +791,9 @@ def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
-def _member_names(user_id: str) -> List[str]:
-    """Return the usernames in the user's group (kept for a minute, so the dialog stays quick)."""
-    return service.group_member_names(user_id)
+def _member_names(user_id: str, group_id: Optional[str]) -> List[str]:
+    """Return the usernames in the chosen group (kept for a minute, so the dialog stays quick)."""
+    return service.group_member_names(user_id, group_id=group_id)
 
 
 def _typed_names(text: str) -> List[str]:
@@ -832,7 +832,7 @@ def new_event_dialog(user: User, now: datetime) -> None:
     if names_event:
         mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP,
                         key="new_event_mode")
-        picked = st.pills("Add group members", _member_names(user.id), selection_mode="multi",
+        picked = st.pills("Add group members", _member_names(user.id, user.group_id), selection_mode="multi",
                           format_func=style.plain, key="new_event_members") or []
         typed = st.text_area("Other names, one per line", height=90, key="new_event_names",
                              placeholder="People who are not in the app")
@@ -856,7 +856,8 @@ def new_event_dialog(user: User, now: datetime) -> None:
         def create() -> None:
             closes = betting.close_time_for(event_time, choice, custom)
             service.create_event(user.id, title, closes, _now(), description, options=options,
-                                 multi_winner=several, line=line_value, event_time=event_time)
+                                 multi_winner=several, line=line_value, event_time=event_time,
+                                 group_id=user.group_id)  # the group the user is looking at
 
         if attempt(create, "Event created."):
             st.rerun()
