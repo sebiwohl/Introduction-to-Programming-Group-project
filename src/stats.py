@@ -8,6 +8,7 @@ A "call" is one member's stake on one side of a resolved event. Refunded calls
 (only one side had bets) count neither as right nor as wrong.
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
@@ -33,7 +34,10 @@ OPEN = "open"
 PAUSED = "paused"
 
 CLOSING_SOON = timedelta(hours=24)
-FEED_FILTERS = ("All", "Open", "Closing soon", "Awaiting result", "Done")
+FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
+# An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).
+HOT_SHARE = 0.5
+HOT_MIN_BETTORS = 2
 RANKINGS = ("Coins", "Hit rate", "Best call", "Streak")
 UNSETTLED = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
 
@@ -182,8 +186,28 @@ def closest_rival(rows: List[LeaderboardRow], username: str) -> Optional[Leaderb
     return max(others, key=lambda r: r.balance)
 
 
-def filter_events(summaries: List[EventSummary], choice: str, now: datetime) -> List[EventSummary]:
-    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all."""
+def bettor_count(summary: EventSummary) -> int:
+    """Return how many different members have bet on the event."""
+    return len({b.username for b in summary.bettors})
+
+
+def is_hot(summary: EventSummary, group_size: int) -> bool:
+    """Return True for an open event that at least half the group (and 2+ people) bet on."""
+    needed = max(HOT_MIN_BETTORS, math.ceil(group_size * HOT_SHARE))
+    return summary.event.status == STATUS_OPEN and bettor_count(summary) >= needed
+
+
+def filter_events(summaries: List[EventSummary], choice: str, now: datetime,
+                  group_size: int = 0) -> List[EventSummary]:
+    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all.
+
+    group_size is the number of members, used to decide which events are hot.
+    Hot bets come with the most bettors first.
+    """
+    if choice == "Hot bets":
+        hot = [s for s in summaries if is_hot(s, group_size)]
+        return sorted(hot, key=bettor_count, reverse=True)
+
     def keep(summary: EventSummary) -> bool:
         """Return True if the event belongs in the chosen tab."""
         status = summary.event.status

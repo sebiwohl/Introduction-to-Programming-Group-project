@@ -11,6 +11,10 @@ from src.stats import MemberStats
 from src.ui import style
 
 FILTERS = ("All", "Open", "Awaiting result", "Won", "Lost", "Refunded")
+# Icon and color of each history filter (see style.tab_colors).
+FILTER_ICONS = {"All": ("apps", "yellow"), "Open": ("lock_open", "green"),
+                "Awaiting result": ("hourglass_top", "blue"), "Won": ("emoji_events", "gold"),
+                "Lost": ("cancel", "red"), "Refunded": ("undo", "grey")}
 FILTER_RESULTS = {"Open": (stats.OPEN, stats.PAUSED), "Awaiting result": (stats.AWAITING,),
                   "Won": (stats.WON,), "Lost": (stats.LOST,), "Refunded": (stats.REFUNDED,)}
 BADGES = {stats.OPEN: ("Open", "open"), stats.PAUSED: ("Paused", "paused"),
@@ -46,18 +50,19 @@ def _tiles(page: PageData, me: MemberStats, results: Counter) -> str:
         hit, hit_note = f"{round(me.hit_rate * 100)}%", f"{me.right} of {me.settled} settled calls right"
     best = style.odds_text(me.best_odds)
     best_note = style.esc(me.best_title) if me.best_odds else "Win a bet to set one"
+    best_number = style.big_number(f'<span class="ci-yes">{best}</span>')
     return (
-        '<div class="ci-tiles">'
-        f'<div class="ci-tile ci-tile-dark"><div class="ci-kicker">Balance</div>'
-        f'<div class="ci-big">{style.money(page.user.balance)}</div>'
+        '<div class="ci-tiles ci-tiles-anim">'
+        f'<div class="ci-tile ci-tile-dark" style="--t:0"><div class="ci-kicker">Balance</div>'
+        f'{style.big_number(style.money(page.user.balance))}'
         f'<div class="ci-muted">{since}</div></div>'
-        f'<div class="ci-tile ci-tile-warm"><div class="ci-kicker">In play</div>'
-        f'<div class="ci-big">{style.money(stats.in_play(page.my_bets))}</div>'
+        f'<div class="ci-tile ci-tile-warm" style="--t:1"><div class="ci-kicker">In play</div>'
+        f'{style.big_number(style.money(stats.in_play(page.my_bets)))}'
         f'<div class="ci-muted">{play_note}</div></div>'
-        f'<div class="ci-tile"><div class="ci-kicker">Hit rate</div><div class="ci-big">{hit}</div>'
+        f'<div class="ci-tile" style="--t:2"><div class="ci-kicker">Hit rate</div>{style.big_number(hit)}'
         f'<div class="ci-muted">{hit_note}</div></div>'
-        f'<div class="ci-tile"><div class="ci-kicker">Best call</div>'
-        f'<div class="ci-big ci-yes">{best}</div><div class="ci-muted">{best_note}</div></div>'
+        f'<div class="ci-tile" style="--t:3"><div class="ci-kicker">Best call</div>'
+        f'{best_number}<div class="ci-muted">{best_note}</div></div>'
         "</div>"
     )
 
@@ -129,7 +134,9 @@ def my_bets_page(page: PageData, me: MemberStats) -> None:
     label_col, filter_col = st.columns([1, 3], vertical_alignment="center")
     style.show(where=label_col, markup='<div class="ci-label">History</div>')
     with filter_col:
+        style.tab_colors("pills_history", [FILTER_ICONS[f][1] for f in FILTERS])
         choice = st.radio("Filter", FILTERS, horizontal=True, key="pills_history",
+                          format_func=lambda f: style.icon_label(FILTER_ICONS[f][0], f),
                           label_visibility="collapsed")
     wanted = FILTER_RESULTS.get(choice)
     records = [r for r in page.my_bets if wanted is None or stats.bet_result(r) in wanted]

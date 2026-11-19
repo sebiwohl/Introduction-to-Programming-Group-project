@@ -11,19 +11,21 @@ from decimal import Decimal
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+import re
+
 import streamlit as st
 
 APP_TIMEZONE = ZoneInfo("Europe/Lisbon")
 MINUS = "−"
 
 # Pastel avatar backgrounds; a member always gets the same one (see avatar()).
-AVATAR_COLOURS = ("#E9E7F7", "#F6E6DD", "#E3F0E6", "#FBF1DA", "#EDE3F3", "#E2EEF7")
+AVATAR_COLOURS = ("#FDF0D5", "#F6E6DD", "#E3F0E6", "#FBF1DA", "#FCE7D9", "#E2EEF7")
 
 CSS = """
 <style>
 :root {
   --ci-ink: #0A0A0A; --ci-text: #111111; --ci-muted: #6B6B72; --ci-line: #E6E6EB;
-  --ci-soft: #F4F4F6; --ci-yes: #3B3BE6; --ci-yes-soft: #EEEFFE; --ci-no: #C8460F;
+  --ci-soft: #F4F4F6; --ci-yes: #E0A100; --ci-yes-soft: #FFF8E6; --ci-no: #C8460F;
   --ci-no-soft: #FFF4EC; --ci-no-line: #EBA987;
 }
 [data-testid="stHeader"], [data-testid="stToolbar"], [data-testid="stDecoration"] {display: none;}
@@ -131,7 +133,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-split-mid {color: var(--ci-muted);}
 .ci-bar {display: flex; gap: 4px; height: 6px; margin-top: 4px;}
 .ci-bar div {border-radius: 999px; min-width: 6px;}
-.ci-bar-yes {background: var(--ci-yes);}
+.ci-bar-yes {background: linear-gradient(90deg, #FDE047, #FACC15);}
 .ci-bar-no {background: var(--ci-no);}
 .ci-bar-empty {background: var(--ci-line); flex: 1;}
 .ci-bar-grey .ci-bar-yes {background: #8E8E95;}
@@ -139,7 +141,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 
 /* bet form, result buttons and the bets list */
 [class*="st-key-yes_"] button {background: var(--ci-yes-soft); color: var(--ci-yes);
-  border-color: #C9CBF7;}
+  border-color: #F3D98B;}
 [class*="st-key-no_"] button {background: var(--ci-no-soft); color: var(--ci-no);
   border-color: #F3CDB8;}
 [class*="st-key-yes_"] button:hover {border-color: var(--ci-yes); color: var(--ci-yes);}
@@ -175,7 +177,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-banner {display: flex; justify-content: space-between; align-items: center; gap: 16px;
   background: var(--ci-ink); color: #FFFFFF; border-radius: 14px; padding: 14px 18px;
   margin: 12px 0 4px;}
-.ci-banner .ci-kicker {color: #9C9CF5;}
+.ci-banner .ci-kicker {color: #FFEDD5;}
 .ci-banner-title {font-weight: 800; font-size: 1.05rem;}
 .ci-banner-sub {font-size: 0.8rem; color: #C9C9CF;}
 .ci-banner-win {font-size: 2rem; font-weight: 900; white-space: nowrap;}
@@ -196,7 +198,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-table td {padding: 11px 16px; border-bottom: 1px solid var(--ci-line); vertical-align: middle;}
 .ci-table tr:last-child td {border-bottom: none;}
 .ci-table .ci-num {text-align: right; white-space: nowrap;}
-.ci-table tr.ci-me td {background: #F0F0FE;}
+.ci-table tr.ci-me td {background: #FFF1E6;}
 .ci-table tr.ci-warm td {background: #FFF6EF;}
 .ci-t-title {font-weight: 700;}
 .ci-gain {color: var(--ci-yes); font-weight: 800;}
@@ -234,6 +236,104 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
 .ci-profile {display: flex; align-items: center; gap: 16px;}
 .ci-tiles + .ci-tiles-more {margin-top: -12px;}
+.ci-rolling {display: inline-flex; align-items: flex-start; line-height: 1;}
+.ci-rolling > span {display: inline-block; height: 1em; line-height: 1;}
+.ci-roll {display: inline-block; height: 1em; overflow: hidden; vertical-align: top;
+  font-variant-numeric: tabular-nums;}
+.ci-roll-strip {display: flex; flex-direction: column;
+  transform: translateY(calc(var(--d) * -1em));
+  animation: ci-roll 1.2s cubic-bezier(.15, .85, .25, 1) both;
+  animation-delay: calc(var(--t, 0) * 90ms + var(--i) * 70ms);}
+.ci-roll-strip > span {display: block; height: 1em; line-height: 1;}
+@keyframes ci-roll {from {transform: translateY(0);}}
+.ci-tiles-anim .ci-tile {animation: ci-rise .5s ease-out both;
+  animation-delay: calc(var(--t, 0) * 90ms);}
+@keyframes ci-rise {from {opacity: 0; transform: translateY(14px) scale(.98);}}
+.ci-tiles-anim .ci-tile:hover {transform: translateY(-3px); transition: transform .15s;}
+/* Rows that start in reverse order and slide into place (see shuffle_style) */
+.ci-shuffle {position: relative;
+  animation: ci-shuffle-0 .9s cubic-bezier(.2, .9, .25, 1.05) both;
+  animation-delay: calc(var(--i, 0) * 70ms + 150ms);}
+@keyframes ci-shuffle-0 {0% {transform: translateY(calc(var(--from, 0) * 100%)); opacity: .25;}
+  35% {opacity: 1;} 100% {transform: none; opacity: 1;}}
+@keyframes ci-shuffle-1 {0% {transform: translateY(calc(var(--from, 0) * 100%)); opacity: .25;}
+  35% {opacity: 1;} 100% {transform: none; opacity: 1;}}
+@keyframes ci-shuffle-2 {0% {transform: translateY(calc(var(--from, 0) * 100%)); opacity: .25;}
+  35% {opacity: 1;} 100% {transform: none; opacity: 1;}}
+@keyframes ci-shuffle-3 {0% {transform: translateY(calc(var(--from, 0) * 100%)); opacity: .25;}
+  35% {opacity: 1;} 100% {transform: none; opacity: 1;}}
+/* Medal rank badges */
+.ci-medal {display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 26px; height: 26px; border-radius: 50%; font-weight: 800; font-size: .82rem;
+  background: var(--ci-soft); color: var(--ci-text);}
+.ci-medal-gold {background: linear-gradient(135deg, #FDE68A, #F59E0B); color: #5B3A00;
+  box-shadow: 0 2px 6px rgba(245, 158, 11, .45);}
+.ci-medal-silver {background: linear-gradient(135deg, #F1F5F9, #94A3B8); color: #1E293B;
+  box-shadow: 0 2px 6px rgba(100, 116, 139, .35);}
+.ci-medal-bronze {background: linear-gradient(135deg, #FED7AA, #C2722E); color: #4A2306;
+  box-shadow: 0 2px 6px rgba(194, 114, 46, .35);}
+/* Feed side cards */
+.ci-board-row {transition: background .15s, transform .15s;}
+.ci-board-row:hover {background: var(--ci-soft); transform: translateX(3px);}
+.ci-board-me {background: #FFF1E6; box-shadow: inset 3px 0 0 var(--ci-yes);}
+.ci-progress {height: 7px;}
+.ci-progress div {height: 7px; background: linear-gradient(90deg, #FB923C, var(--ci-yes));
+  animation: ci-grow 1.1s cubic-bezier(.2, .8, .2, 1) .3s both;}
+@keyframes ci-grow {from {width: 0;}}
+.ci-streak svg, .ci-streak img {animation: ci-flicker 1.4s ease-in-out infinite;
+  transform-origin: 50% 90%;}
+@keyframes ci-flicker {0%, 100% {transform: scale(1) rotate(0);}
+  50% {transform: scale(1.15) rotate(-4deg);}}
+/* Your standing: colored card on the Feed */
+.ci-card.ci-standing {background: var(--ci-grad);
+  border: none; color: #FFFFFF; box-shadow: 0 10px 26px rgba(234, 88, 12, .22);
+  position: relative; overflow: hidden;}
+.ci-standing::after {content: ""; position: absolute; right: -40px; top: -40px; width: 140px;
+  height: 140px; border-radius: 50%; background: rgba(255, 255, 255, .08);}
+.ci-standing .ci-kicker, .ci-standing .ci-muted {color: #FFEDD5;}
+.ci-standing .ci-big {color: var(--ci-gold);}
+.ci-standing b {color: #FFFFFF !important;}
+.ci-standing .ci-progress {background: rgba(255, 255, 255, .22);}
+.ci-standing .ci-progress div {background: linear-gradient(90deg, #FFFFFF, #FED7AA);}
+.ci-standing .ci-streak {color: #FED7AA;}
+.ci-standing .ci-streak img, .ci-standing .ci-streak svg {filter: brightness(0) invert(1);}
+/* Leaderboard podium and table */
+.ci-podium-card {animation: ci-rise .6s ease-out both; animation-delay: calc(var(--t, 0) * 120ms);
+  transition: transform .15s, box-shadow .15s;}
+.ci-podium-card:hover {transform: translateY(-4px); box-shadow: 0 10px 24px rgba(0, 0, 0, .08);}
+.ci-podium-first {background: linear-gradient(145deg, #111111, #2B2B33);
+  box-shadow: 0 10px 28px rgba(245, 158, 11, .18);}
+.ci-podium-first .ci-podium-rank {color: #FBBF24;}
+.ci-table tr:hover td {background: #F7F7FA;}
+@media (prefers-reduced-motion: reduce) {
+  .ci-shuffle, .ci-progress div, .ci-podium-card, .ci-streak svg, .ci-streak img {animation: none;}
+}
+/* Colored tabs and pills: each option sets --c (see tab_colors) */
+[class*="st-key-tabs_"] [data-testid="stRadioOption"],
+[class*="st-key-pills_"] [data-testid="stRadioOption"] {
+  border-radius: 10px 10px 0 0; transition: background .15s, border-color .15s, transform .15s;}
+[class*="st-key-tabs_"] [data-testid="stRadioOption"] p span[role="img"],
+[class*="st-key-pills_"] [data-testid="stRadioOption"] p span[role="img"] {
+  color: var(--c, var(--ci-muted)); font-size: 1.15em; margin-right: 2px;
+  transition: transform .2s;}
+[class*="st-key-tabs_"] [data-testid="stRadioOption"]:hover {
+  background: color-mix(in srgb, var(--c, #888) 9%, transparent);}
+[class*="st-key-tabs_"] [data-testid="stRadioOption"]:hover p span[role="img"],
+[class*="st-key-pills_"] [data-testid="stRadioOption"]:hover p span[role="img"] {transform: scale(1.2);}
+[class*="st-key-tabs_"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: color-mix(in srgb, var(--c, #888) 13%, transparent);
+  border-bottom-color: var(--c, var(--ci-ink));}
+[class*="st-key-pills_"] [data-testid="stRadioOption"] {border-radius: 999px;
+  border-color: color-mix(in srgb, var(--c, #888) 45%, transparent);}
+[class*="st-key-pills_"] [data-testid="stRadioOption"]:hover {
+  background: color-mix(in srgb, var(--c, #888) 10%, transparent); transform: translateY(-1px);}
+[class*="st-key-pills_"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--c, var(--ci-ink)); border-color: var(--c, var(--ci-ink));}
+[class*="st-key-pills_"] [data-testid="stRadioOption"][data-selected="true"] p span[role="img"] {
+  color: #FFFFFF;}
+@media (prefers-reduced-motion: reduce) {
+  .ci-roll-strip, .ci-tiles-anim .ci-tile {animation: none;}
+}
 .ci-animal {background: var(--ci-soft) !important; font-size: 0.95rem; line-height: 1;}
 .ci-animal.ci-avatar-me {box-shadow: 0 0 0 2px var(--ci-ink);}
 .ci-profile .ci-avatar {width: 64px; height: 64px; font-size: 1.6rem;}
@@ -256,6 +356,108 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   .ci-ev {flex-direction: column;}
   .st-key-topbar {position: static;}
 }
+
+/* Page transition: each page's box fades and rises in when you switch pages */
+[class*="st-key-page_"] {animation-duration: .45s; animation-timing-function: cubic-bezier(.2, .8, .2, 1);
+  animation-fill-mode: both;}
+@keyframes ci-page-0 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_0 {animation-name: ci-page-0;}
+@keyframes ci-page-1 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_1 {animation-name: ci-page-1;}
+@keyframes ci-page-2 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_2 {animation-name: ci-page-2;}
+@keyframes ci-page-3 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_3 {animation-name: ci-page-3;}
+@keyframes ci-page-4 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_4 {animation-name: ci-page-4;}
+@keyframes ci-page-5 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_5 {animation-name: ci-page-5;}
+@keyframes ci-page-6 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_6 {animation-name: ci-page-6;}
+@keyframes ci-page-7 {from {opacity: 0; transform: translateY(10px);} to {opacity: 1; transform: none;}}
+.st-key-page_7 {animation-name: ci-page-7;}
+@media (prefers-reduced-motion: reduce) {[class*="st-key-page_"] {animation: none !important;}}
+
+/* ===== Orange theme: matches the "Your standing" card everywhere ===== */
+:root {
+  --ci-brand: #EA580C; --ci-brand-deep: #C2410C; --ci-brand-soft: #FFEDD5;
+  --ci-grad: linear-gradient(140deg, #C2410C 0%, #EA580C 50%, #F97316 100%);
+  --ci-gold: #FFF7D6; --ci-soft: #FFF7ED; --ci-line: #F6E3D3;
+  --ci-shadow: 0 6px 18px rgba(154, 52, 18, .07);
+}
+/* soft peach glow behind the page */
+[data-testid="stApp"] {background: linear-gradient(180deg, #FFE4CC 0%, #FFF0E3 28%, #FFF9F4 55%,
+  #FFFFFF 80%) fixed;}
+/* top bar: a solid white rounded box */
+.st-key-topbar {background: #FFFFFF; border: 1px solid var(--ci-line); border-radius: 18px;
+  padding: 10px 16px 8px; box-shadow: var(--ci-shadow);}
+/* each event in the feed is its own white card */
+[class*="st-key-ev_"] {background: #FFFFFF; border: 1px solid var(--ci-line); border-radius: 18px;
+  padding: 16px 18px 18px; margin: 12px 0; box-shadow: var(--ci-shadow);
+  transition: transform .15s, box-shadow .15s;}
+[class*="st-key-ev_"]:hover {transform: translateY(-2px); box-shadow: 0 12px 26px rgba(154, 52, 18, .1);}
+[class*="st-key-wait_"] {box-shadow: var(--ci-shadow);}
+/* page titles in a dark-to-orange gradient */
+.ci-h1 {background: linear-gradient(90deg, #431407 0%, #C2410C 55%, #F97316 100%);
+  -webkit-background-clip: text; background-clip: text; color: transparent;}
+/* every dark surface becomes the orange gradient */
+.ci-card-dark, .ci-banner, .ci-tile-dark, .ci-podium-first, .st-key-invite {
+  background: var(--ci-grad) !important; border-color: transparent !important; color: #FFFFFF;
+  box-shadow: 0 10px 26px rgba(234, 88, 12, .2);}
+.ci-card-dark .ci-kicker, .ci-banner .ci-kicker, .ci-banner-sub, .ci-tile-dark .ci-kicker,
+.ci-tile-dark .ci-muted, .ci-podium-first .ci-muted, .st-key-invite .ci-kicker {color: #FFEDD5;}
+.ci-tile-dark .ci-big, .ci-podium-first .ci-podium-rank, .ci-banner-win {color: var(--ci-gold);}
+/* light cards and tiles: white or peach with a soft orange shadow */
+.ci-card, [class*="st-key-card_"], .ci-podium-card {box-shadow: var(--ci-shadow);}
+.ci-tile {background: #FFFFFF; box-shadow: var(--ci-shadow);}
+.ci-tile-warm {background: #FFF8E6; border-color: #FBE3A6;}
+.ci-tile-warm .ci-kicker {color: #B45309;}
+.ci-podium-me {border-color: var(--ci-brand); }
+.ci-podium-me .ci-muted {color: var(--ci-brand);}
+.ci-note {background: var(--ci-brand-soft); color: #7C2D12;}
+/* small accents that were black */
+.ci-pill-open, .ci-pill-resolved {background: var(--ci-brand);}
+.ci-admin {background: var(--ci-grad);}
+.ci-avatar-me:not(.ci-animal) {background: var(--ci-brand) !important;}
+.ci-animal.ci-avatar-me {box-shadow: 0 0 0 2px var(--ci-brand);}
+.ci-profile .ci-animal {background: var(--ci-brand-soft) !important; border-color: #FFEDD5;}
+/* long names wrap instead of pushing the page sideways */
+.ci-profile {min-width: 0;}
+.ci-profile > div {min-width: 0;}
+.ci-profile-name {flex-wrap: wrap; overflow-wrap: anywhere;}
+/* phones: tiles and their big numbers shrink so nothing sticks out sideways */
+.ci-tile, .ci-podium-card {min-width: 0;}
+@media (max-width: 520px) {
+  .ci-tiles, .ci-podium {gap: 10px;}
+  .ci-tile, .ci-podium-card {padding: 12px 12px;}
+  .ci-tile .ci-big {font-size: 1.75rem;}
+  .ci-podium-rank {font-size: 2.2rem;}
+}
+.ci-odd-win {outline-color: var(--ci-brand);}
+.ci-board-me, .ci-table tr.ci-me td {background: var(--ci-brand-soft);}
+.ci-better {color: var(--ci-brand);}
+/* forms (log in, sign up, groups, new event) are white cards; inputs are white */
+[data-testid="stForm"] {background: #FFFFFF; border: 1px solid var(--ci-line) !important;
+  border-radius: 18px; box-shadow: var(--ci-shadow); padding: 18px 20px;}
+[class*="st-key-ev_"] [data-testid="stForm"], [class*="st-key-wait_"] [data-testid="stForm"] {
+  background: transparent; box-shadow: none; border: none !important; padding: 0;}
+[data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
+[data-testid="stTextAreaRootElement"], [data-testid="stDateInputField"],
+[data-baseweb="input"], [data-baseweb="input"] > div, [data-baseweb="input"] input,
+[data-baseweb="textarea"], [data-baseweb="textarea"] textarea,
+[data-baseweb="select"] > div {background-color: #FFFFFF !important;}
+[data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
+[data-testid="stTextAreaRootElement"], [data-baseweb="select"] > div {
+  border: 1px solid var(--ci-line) !important;}
+[data-testid="stNumberInputContainer"] button {background-color: #FFFFFF !important;}
+/* top menu: orange underline and text on the open page */
+.st-key-nav [data-testid="stRadioOption"][data-selected="true"] {border-bottom-color: var(--ci-brand);}
+.st-key-nav [data-testid="stRadioOption"][data-selected="true"] p {color: var(--ci-brand);}
+/* main buttons (New event, Bet, Save ...) in the orange gradient */
+[data-testid="stBaseButton-primary"] {background: var(--ci-grad) !important; border: none !important;
+  box-shadow: 0 6px 16px rgba(234, 88, 12, .28); transition: transform .15s, box-shadow .15s;}
+[data-testid="stBaseButton-primary"]:hover {transform: translateY(-1px);
+  box-shadow: 0 10px 22px rgba(234, 88, 12, .34);}
 </style>
 """
 
@@ -325,7 +527,7 @@ def logo(height: int = 26) -> str:
     bang = svg_image(
         '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 9 25">'
         '<rect x="1" y="0" width="7" height="16" rx="3.5" fill="#C8460F"/>'
-        '<circle cx="4.5" cy="21.2" r="3.6" fill="#3B3BE6"/></svg>', round(word * 0.36), word,
+        '<circle cx="4.5" cy="21.2" r="3.6" fill="#EAB308"/></svg>', round(word * 0.36), word,
     )
     return (
         f'<span class="ci-logo" role="img" aria-label="Called it!">{bubble}'
@@ -438,6 +640,88 @@ def stake_bar(stake_yes: Decimal, stake_no: Decimal, middle: str = "", grey: boo
         parts.append(f'<div class="ci-bar-no" style="flex:{stake_no}"></div>')
     grey_class = " ci-bar-grey" if grey else ""
     return f'{labels}<div class="ci-bar{grey_class}">{"".join(parts)}</div>'
+
+
+# Bright colors for tab icons (also used for the tinted hover and selected tab).
+TAB_COLORS = {"yellow": "#EAB308", "orange": "#EA580C", "green": "#16A34A", "red": "#DC2626",
+              "blue": "#2563EB", "gold": "#CA8A04", "grey": "#6B7280"}
+
+
+def icon_label(icon: str, text: str) -> str:
+    """Return a tab label with a Material icon in front, e.g. ':material/timer: Closing soon'."""
+    return f":material/{icon}: {text}" if icon else text
+
+
+def tab_colors(key: str, colors: list) -> None:
+    """Give each option of the radio with this key its own color, in order.
+
+    The icon takes the color; hovering tints the option and the selected
+    option gets a soft background plus a colored underline (tabs) or fill (pills).
+    """
+    rules = []
+    for index, name in enumerate(colors, start=1):
+        rules.append(f'.st-key-{key} [role="radiogroup"] > :nth-child({index})'
+                     f" {{--c: {TAB_COLORS[name]};}}")
+    st.markdown(f"<style>{''.join(rules)}</style>", unsafe_allow_html=True)
+
+
+def big_number(value: str) -> str:
+    """Return the big tile number whose digits roll in, with the real value for screen readers."""
+    return (f'<div class="ci-big" role="img" aria-label="{esc(plain_text(value))}">'
+            f"{rolling(value)}</div>")
+
+
+MEDALS = {1: "gold", 2: "silver", 3: "bronze"}
+
+
+def rank_badge(rank: int) -> str:
+    """Return the rank as a round badge: gold, silver or bronze for the top 3."""
+    medal = MEDALS.get(rank, "plain")
+    return f'<span class="ci-medal ci-medal-{medal}">{rank}</span>'
+
+
+SHUFFLE_VARIANTS = 4
+
+
+def shuffle_style(index: int, count: int, variant: int = 0) -> str:
+    """Return inline CSS that makes row `index` (of `count`) slide in from the reversed order.
+
+    Streamlit reuses the same rows when the page changes, so a different
+    variant (one per ranking) gives the animation a new name and replays it.
+    """
+    name = f"ci-shuffle-{variant % SHUFFLE_VARIANTS}"
+    return f"--i:{index};--from:{count - 1 - 2 * index};animation-name:{name}"
+
+
+def plain_text(markup: str) -> str:
+    """Return markup without its HTML tags, e.g. for an aria-label."""
+    return re.sub(r"<[^>]+>", "", markup)
+
+
+def _roll_digit(digit: str, index: int) -> str:
+    """Return one digit as a spinning 0-9 strip that stops on the digit (twice round)."""
+    numbers = "".join(f"<span>{n % 10}</span>" for n in range(20))
+    return (f'<span class="ci-roll" aria-hidden="true" style="--d:{int(digit) + 10};--i:{index}">'
+            f'<span class="ci-roll-strip">{numbers}</span></span>')
+
+
+def rolling(markup: str) -> str:
+    """Return markup whose digits roll into place like a slot machine; tags are kept as is."""
+    parts, index = [], 0
+    for piece in re.split(r"(<[^>]+>)", markup):
+        if piece.startswith("<") or not any(c.isdigit() for c in piece):
+            parts.append(piece)
+            continue
+        chars = []
+        for char in piece:
+            if char.isdigit():
+                chars.append(_roll_digit(char, index))
+                index += 1
+            else:
+                chars.append(f'<span aria-hidden="true">{char}</span>')
+        # one row, so spinning digits and symbols like # or % line up exactly
+        parts.append(f'<span class="ci-rolling">{"".join(chars)}</span>')
+    return "".join(parts)
 
 
 def heading(title: str, kicker: str) -> str:

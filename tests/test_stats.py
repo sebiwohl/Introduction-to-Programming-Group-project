@@ -236,3 +236,30 @@ def test_my_row_finds_user_or_none():
     board = rows(("Ann", 1200), ("You", 900))
     assert stats.my_row(board, "You").rank == 2
     assert stats.my_row(board, "Nobody") is None
+
+
+def test_hot_bets_need_half_the_group_and_at_least_two_people():
+    events = [
+        summary("three", "open", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "yes", 5)]),
+        summary("two", "open", [("Ann", "yes", 5), ("Ben", "no", 5)]),
+        summary("one_twice", "open", [("Ann", "yes", 5), ("Ann", "no", 5)]),
+        summary("closed", "closed", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "no", 5)]),
+    ]
+    hot = lambda size: [s.event.id for s in stats.filter_events(events, "Hot bets", NOW, size)]  # noqa: E731
+    assert hot(4) == ["three", "two"]          # half of 4 is 2 people
+    assert hot(6) == ["three"]                 # half of 6 is 3 people
+    assert hot(1) == ["three", "two"]          # never fewer than 2 people
+    assert hot(10) == []                       # nobody reaches 5 bettors
+
+
+def test_hot_bets_most_bettors_first():
+    events = [
+        summary("two", "open", [("Ann", "yes", 5), ("Ben", "no", 5)]),
+        summary("three", "open", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "yes", 5)]),
+    ]
+    assert [s.event.id for s in stats.filter_events(events, "Hot bets", NOW, 4)] == ["three", "two"]
+
+
+def test_bettor_count_counts_people_not_bets():
+    event = summary("e", "open", [("Ann", "yes", 5), ("Ann", "no", 5), ("Ben", "yes", 1)])
+    assert stats.bettor_count(event) == 2
