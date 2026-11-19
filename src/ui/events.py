@@ -820,7 +820,8 @@ def new_event_dialog(user: User, now: datetime) -> None:
     typed when the type changes.
     """
     today = now.astimezone(style.APP_TIMEZONE).date()
-    kind = st.radio("Type", KIND_CHOICES, horizontal=True, key="new_event_kind")
+    with st.container(key="choice_kind"):  # drawn as equal round buttons (style.py)
+        kind = st.radio("Type", KIND_CHOICES, horizontal=True, key="new_event_kind")
     names_event = kind == KIND_CHOICES[1]
     over_under = kind == KIND_CHOICES[2]
     example = ("Who is going to show up late?" if names_event else
@@ -830,8 +831,9 @@ def new_event_dialog(user: User, now: datetime) -> None:
     description = st.text_area("Details (optional)", key="new_event_details",
                                max_chars=service.MAX_DESCRIPTION_LENGTH, height=80)
     if names_event:
-        mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP,
-                        key="new_event_mode")
+        with st.container(key="choice_mode"):
+            mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP,
+                            key="new_event_mode")
         picked = st.pills("Add group members", _member_names(user.id, user.group_id), selection_mode="multi",
                           format_func=style.plain, key="new_event_members") or []
         typed = st.text_area("Other names, one per line", height=90, key="new_event_names",
@@ -844,10 +846,13 @@ def new_event_dialog(user: User, now: datetime) -> None:
                                     "which refunds everyone.")
         st.caption("The line can't be changed after the event is created.")
     event_time = _moment_fields("Event date", "new_event_date", today, time(18, 0))
-    choice = st.radio("Betting closes", betting.CLOSE_CHOICES, horizontal=True,
-                      key="new_event_closes", help=CLOSES_HELP)
-    custom = (_moment_fields("Betting closes on", "new_event_custom", today, time(17, 0))
-              if choice == betting.CLOSE_CUSTOM else None)
+    close_col, custom_col = st.columns([1, 2.2], vertical_alignment="bottom")
+    choice = close_col.selectbox("Betting closes", betting.CLOSE_CHOICES, key="new_event_closes",
+                                 help=CLOSES_HELP)
+    custom = None
+    if choice == betting.CLOSE_CUSTOM:
+        with custom_col, st.container(border=True, key="custom_close"):
+            custom = _moment_fields("Betting closes on", "new_event_custom", today, time(17, 0))
     if st.button("Create event", type="primary", width="stretch", key="new_event_create"):
         options = list(picked) + _typed_names(typed) if names_event else None
         several = names_event and mode == WINNER_CHOICES[1]

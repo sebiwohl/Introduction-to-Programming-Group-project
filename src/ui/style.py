@@ -486,6 +486,69 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 /* top menu: orange underline and text on the open page */
 .st-key-nav [data-testid="stRadioOption"][data-selected="true"] {border-bottom-color: var(--ci-brand);}
 .st-key-nav [data-testid="stRadioOption"][data-selected="true"] p {color: var(--ci-brand);}
+/* the menu in two parts: the group block (dropdown + Feed, Leaderboard, Group) and my pages */
+[class*="st-key-nav_"] [role="radiogroup"] {flex-wrap: nowrap; gap: 2px;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] {margin: 0; cursor: pointer; padding: 6px 10px;
+  border-bottom: 2px solid transparent;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] > div > div:first-child {display: none;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] p {color: var(--ci-muted); font-weight: 500;
+  white-space: nowrap;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"][data-selected="true"] {
+  border-bottom-color: var(--ci-brand);}
+[class*="st-key-nav_"] [data-testid="stRadioOption"][data-selected="true"] p {
+  color: var(--ci-brand); font-weight: 700;}
+.st-key-navgroup {background: var(--ci-brand-soft); border-radius: 14px; padding: 2px 6px 2px 4px;
+  flex-wrap: nowrap;}
+.st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 8px;}
+/* the group dropdown looks like a tab: no box, bold, orange, with its arrow */
+.st-key-groupsel {width: 180px !important; min-width: 180px; flex: 0 0 auto;}
+.st-key-navrow {flex-wrap: wrap; margin-top: 2px;}
+.st-key-navgroup, .st-key-navme {width: fit-content !important; flex: 0 0 auto;}
+.st-key-navgroup > div:first-child {flex: 0 0 auto !important; width: auto !important;}
+.st-key-groupsel [data-baseweb="select"] > div {background: transparent !important;
+  border: none !important; border-bottom: 2px solid var(--ci-brand) !important;
+  border-radius: 0 !important; min-height: 32px; box-shadow: none !important;}
+.st-key-groupsel [data-baseweb="select"] svg {color: var(--ci-brand); fill: var(--ci-brand);}
+/* first row of the top bar: logo on the left, the rest on the right, never stacked */
+.st-key-toprow {flex-wrap: nowrap;}
+.st-key-toprow > div:first-child {margin-right: auto;}
+.st-key-toprow > div {width: auto !important; flex: 0 0 auto;}
+.st-key-groupsel [data-baseweb="select"] div[value], .st-key-groupsel [data-baseweb="select"] span {
+  color: var(--ci-brand); font-weight: 700; font-size: 0.9rem;}
+@media (max-width: 760px) {
+  .st-key-toprow {flex-wrap: wrap;}
+}
+@media (max-width: 900px) {
+  .st-key-navrow {flex-direction: column; align-items: stretch; row-gap: 4px !important;}
+  .st-key-navrow > div, .st-key-navgroup, .st-key-navme {width: 100% !important;
+    flex: 0 0 auto !important; height: auto !important;}
+  .st-key-navgroup {flex-wrap: wrap;}
+  [class*="st-key-nav_"] [role="radiogroup"] {flex-direction: row !important; flex-wrap: wrap;}
+  .st-key-navme {border-left: none; padding-left: 0;}
+}
+/* choices drawn as equal round buttons (New event: Type, Who can win), like the member chips */
+[class*="st-key-choice_"] [role="radiogroup"] {display: grid !important; grid-auto-flow: column;
+  grid-auto-columns: 1fr; gap: 10px; width: 100%;}
+[class*="st-key-choice_"] [data-testid="stElementContainer"],
+[class*="st-key-choice_"] [data-testid="stRadio"] {width: 100% !important;}
+[class*="st-key-choice_"] [role="radiogroup"] > div {display: flex; width: 100%;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] {width: 100%;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] > div {flex: 1 1 auto; display: flex;
+  justify-content: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] {
+  width: 100%; text-align: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] {justify-content: center; margin: 0;
+  border: 1px solid var(--ci-line); border-radius: 999px; padding: 8px 12px; background: #FFFFFF;
+  cursor: pointer; transition: background .15s, border-color .15s;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] > div > div:first-child {display: none;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] p {font-weight: 600; text-align: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"]:hover {border-color: #FDBA74;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--ci-brand-soft); border-color: var(--ci-brand);}
+[class*="st-key-choice_"] [data-testid="stRadioOption"][data-selected="true"] p {
+  color: var(--ci-brand);}
+/* the small box with the custom close day and time, next to the Betting closes dropdown */
+.st-key-custom_close {background: #FFF7ED; border-color: #FED7AA !important; padding: 8px 12px;}
 /* main buttons (New event, Bet, Save ...) in the orange gradient */
 [data-testid="stBaseButton-primary"] {background: var(--ci-grad) !important; border: none !important;
   box-shadow: 0 6px 16px rgba(234, 88, 12, .28); transition: transform .15s, box-shadow .15s;}
