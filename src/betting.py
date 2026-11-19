@@ -247,11 +247,11 @@ def resolve_event(
     """Set the outcome, pay out every bet and mark the event resolved.
 
     Only possible after the close time and the event date. Winners split the
-    whole pool in proportion to their stakes. If only one side has bets (so nobody backed the
-    winner, or nobody lost), every stake is refunded. Sets Bet.payout and
-    credits the users' balances. Returns the total paid out, which always
-    equals the pool. A resolved event is read-only, so resolving it again
-    raises BettingError. Names events are resolved with resolve_names_event.
+    whole pool in proportion to their stakes. If only one side has bets (so
+    nobody backed the winner, or nobody lost), every stake is refunded. Sets
+    Bet.payout and credits the users' balances. Returns the total paid out,
+    which always equals the pool. A resolved event is read-only, so resolving
+    it again raises BettingError. Names events are resolved with resolve_names_event.
     Nothing changes on error.
     """
     if is_names_event(event):
