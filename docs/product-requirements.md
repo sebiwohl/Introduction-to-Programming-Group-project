@@ -77,9 +77,9 @@ Decided method: everyone starts at 0, with top-ups and repayments.
 - **Top-up:** only the admin can top up, and chooses the amount each time. Every member of the group always gets the same amount, new members included. There are no top-ups for single members, so the differences between members stay the same.
 - **Repayment:** a window shows who is up and who is down compared with what they were given this period (all top-ups they received), with simplified transfers and a copy button for the group chat. Opening and closing the window changes nothing. The real repayment happens outside the app, so no real money goes through the app.
 - **Repaid:** only the admin can confirm it, in the repayment window, and must enter a top-up amount above 0 in the same step. All balances go back to 0, a new period starts, and everyone is topped up at once, so betting can continue.
-- **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. Their stakes were already taken from the old period's balance, and their payouts or refunds land in the new period.
+- **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. An open stake is not lost yet, so it counts as the member's in the old period's result and moves into the new period with the bet (it is added to what they received in the new period). Its payout or refund lands in the new period. This way the results of every period add up to 0 and the transfers always match.
 - **Stats:** shown for "This period" (since the last repayment) and "All time".
-- **Debt:** a member has debt when their balance is lower than the top-ups they received this period, so they are down. Right after a repayment nobody has debt.
+- **Result and debt:** a member's result this period is their balance plus their stakes on open bets, minus the top-ups they received this period. Below 0 they have debt, so they are down. Right after a repayment nobody has debt.
 - **Leaving:** possible at any time when the member has no debt and no open bets. Otherwise an error message says why.
 - **Joining mid-period:** a member who joins later also starts at 0 and can bet only after the admin's next top-up, which every member gets.
 
@@ -183,7 +183,7 @@ Names events need no upgrade: they only add optional fields to version 2.
 | role       | member or admin                                    |
 | balance    | Current coins in this group                        |
 | restricted | true when the admin has restricted the member (2.2) |
-| received   | Coins given by top-ups this period, since the last repayment (2.4). Result this period = balance - received; below 0 means debt |
+| received   | Coins given by top-ups this period, since the last repayment, plus the open stakes carried over at the last repayment (2.4). Result this period = balance + open stakes - received; below 0 means debt |
 
 **Group**
 
@@ -341,7 +341,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Starting balance: none; everyone starts at 0, also after each repayment.
 - Balances: start at 0, with top-ups and repayments (section 2.4).
 - Top-up amount: chosen by the admin each time.
-- Repaid: confirmed by the admin in the repayment window, together with a top-up amount above 0 (any amount; it does not need to cover open stakes, since stakes are taken when a bet is placed); balances go back to 0 and everyone is topped up in the same step. Open bets carry over into the new period.
+- Repaid: confirmed by the admin in the repayment window, together with a top-up amount above 0 (any amount; it does not need to cover open stakes, since stakes are taken when a bet is placed); balances go back to 0 and everyone is topped up in the same step. Open bets carry over into the new period, and their stakes count as not lost yet, so every period's results add up to 0. The admin ticks "Everyone has paid" before pressing "Repaid".
 - Creating events: blocked for each member whose balance is 0 (in a new group, everyone until the first top-up).
 - Low balance: below 10% of the last top-up amount; the admin is notified.
 - Rounding: 2 decimals, each share rounded down to the cent; leftover cents go to the winner with the biggest stake (on a tie, the bet placed first).

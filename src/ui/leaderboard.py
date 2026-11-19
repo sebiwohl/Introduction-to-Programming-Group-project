@@ -1,13 +1,20 @@
-"""The Leaderboard page: top three, the full ranking, head to head and group records."""
+"""The Leaderboard page: top three, the full ranking, head to head, group records
+and the repayment window."""
 
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Optional
 
 import streamlit as st
 
-from src import stats
+from src import balances, stats
+from src.betting import BettingError
+from src.models import ROLE_ADMIN
 from src.service import LeaderboardRow, PageData
 from src.stats import MemberStats
+from src.storage import StorageError
 from src.ui import style
+from src.ui.actions import attempt
 
 
 # Icon and color of each "Rank by" tab (see style.tab_colors).
@@ -78,7 +85,7 @@ def _table(page: PageData, ordered: List[LeaderboardRow], member: Dict[str, Memb
     for place, row in enumerate(ordered, start=1):
         is_me = row.username == page.user.username
         stats_of = member.get(row.username, MemberStats())
-        change = row.balance - row.received
+        change = row.result
         change_css = "ci-gain" if change > 0 else ""
         rows.append(
             f'<tr class="ci-shuffle{" ci-me" if is_me else ""}" '
@@ -190,3 +197,55 @@ def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
     left, right = st.columns(2, gap="medium")
     style.show(where=left, markup=_head_to_head(page, member))
     style.show(where=right, markup=_records(page, member))
+    st.write("")
+    _repayment_window(page)
+
+
+def _results_table(summary: balances.RepaymentSummary) -> str:
+    """Return the table of who is up and who is down this period."""
+    rows = "".join(
+        f"<tr><td>{style.esc(r.username)}</td><td>{style.money(r.received)}</td>"
+        f"<td>{style.money(r.balance)}</td><td>{style.money(r.open_stake)}</td>"
+        f'<td><b class="{"ci-gain" if r.result > 0 else ""}">{style.signed(r.result)}</b></td></tr>'
+        for r in summary.results
+    )
+    return ('<table class="ci-table"><tr><th>Member</th><th>Received</th><th>Balance</th>'
+            f"<th>In open bets</th><th>Result</th></tr>{rows}</table>")
+
+
+def _repaid_form(page: PageData) -> None:
+    """Draw the admin's "Repaid" form: confirm the payments and top up everyone at once."""
+    with st.form("repaid"):
+        st.caption("After everyone has paid outside the app: every balance becomes the "
+                   "top-up below and a new period starts. Open bets carry over.")
+        amount = st.number_input("Top-up for the new period", min_value=1, value=100, step=50)
+        paid = st.checkbox("Everyone has paid as shown above")
+        if st.form_submit_button("Repaid", type="primary"):
+            if not paid:
+                st.error("Tick the box once everyone has paid.")
+            elif attempt(lambda: balances.confirm_repaid(
+                    page.user.id, page.group.id, Decimal(int(amount)), datetime.now(timezone.utc)),
+                    f"Repaid. A new period started with {int(amount)} coins each."):
+                st.rerun()
+
+
+def _repayment_window(page: PageData) -> None:
+    """Draw the repayment window; opening and closing it changes nothing."""
+    with st.expander("Repayment: who owes whom this period"):
+        try:
+            summary = balances.repayment_summary(page.user.id, page.group.id)
+        except (BettingError, StorageError) as error:
+            st.error(str(error))
+            return
+        style.show(_results_table(summary))
+        st.write("")
+        if summary.transfers:
+            items = "".join(f"<li><b>{style.esc(t.payer)}</b> pays <b>{style.esc(t.receiver)}</b> "
+                            f"{style.money(t.amount)} coins</li>" for t in summary.transfers)
+            style.show(f"<ul>{items}</ul>")
+        else:
+            style.show("<p>Everyone is even: nobody owes anything.</p>")
+        st.caption("Copy this into the group chat (copy button on the right):")
+        st.code(summary.text, language=None)
+        if page.user.role == ROLE_ADMIN:
+            _repaid_form(page)

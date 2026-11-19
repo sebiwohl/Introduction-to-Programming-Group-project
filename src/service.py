@@ -132,7 +132,8 @@ class LeaderboardRow:
     """One member's place on the leaderboard.
 
     open_bets counts the member's bets that are not settled yet (event open,
-    paused or waiting for its result).
+    paused or waiting for its result). result is their result this period:
+    balance + open stakes - received (see balances.period_result).
     """
 
     rank: int
@@ -142,6 +143,7 @@ class LeaderboardRow:
     open_bets: int = 0
     avatar: str = ""
     received: Decimal = Decimal("0")
+    result: Decimal = Decimal("0")
 
 
 # --- loading and saving -------------------------------------------------------
@@ -379,6 +381,7 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
     members = [u for u in state.users.values() if u.group_id == user.group_id]
     members.sort(key=lambda u: (-u.balance, u.username.casefold()))
     open_bets = _open_bet_counts(state)
+    stakes = _open_stake_totals(state, user.group_id)
     rows, rank, previous = [], 0, None
     for position, member in enumerate(members, start=1):
         if member.balance != previous:
@@ -388,8 +391,21 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
             is_admin=auth.is_group_admin(member, user.group_id),
             open_bets=open_bets.get(member.id, 0), avatar=member.avatar,
             received=member.received,
+            result=balances.period_result(member, stakes.get(member.id, Decimal("0"))),
         ))
     return rows
+
+
+def _open_stake_totals(state: _State, group_id: str) -> Dict[str, Decimal]:
+    """Return each user's stakes on the group's bets that are not settled yet."""
+    unsettled = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
+    totals: Dict[str, Decimal] = {}
+    for bet in state.bets:
+        event = state.events.get(bet.event_id)
+        if (event is not None and event.group_id == group_id and event.status in unsettled
+                and bet.payout is None):
+            totals[bet.user_id] = totals.get(bet.user_id, Decimal("0")) + bet.stake
+    return totals
 
 
 def _open_bet_counts(state: _State) -> Dict[str, int]:

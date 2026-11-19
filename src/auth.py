@@ -56,9 +56,10 @@ DELETE_EVENT = "delete_event"
 MANAGE_MEMBERS = "manage_members"
 TRANSFER_ADMIN = "transfer_admin"
 TOP_UP = "top_up"
+REPAY = "repay"
 
 MEMBER_ACTIONS = {VIEW_FEED, CREATE_EVENT, PLACE_BET, FLAG_EVENT, VOTE_POLL}
-ADMIN_ONLY_ACTIONS = {OPEN_POLL, MANAGE_MEMBERS, TRANSFER_ADMIN, TOP_UP}
+ADMIN_ONLY_ACTIONS = {OPEN_POLL, MANAGE_MEMBERS, TRANSFER_ADMIN, TOP_UP, REPAY}
 CREATOR_OR_ADMIN_ACTIONS = {RESOLVE_EVENT: "resolve", DELETE_EVENT: "delete"}
 
 
@@ -296,7 +297,7 @@ def require_permission(user: User, action: str, event: Optional[Event] = None) -
     Every action needs a group. When an event is given, it must be in one of
     the user's groups. Resolving and deleting an event are allowed for its
     creator and the group admin; open_poll, manage_members and transfer_admin
-    are admin-only, like top_up. A restricted member may only view (requirements
+    are admin-only, like top_up and repay. A restricted member may only view (requirements
     2.2), and a member with a balance of 0 cannot create events (2.4).
     Time limits (such as deleting only more than 3 hours before betting closes)
     are checked where the action happens.

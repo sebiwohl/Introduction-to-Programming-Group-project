@@ -243,9 +243,14 @@ def test_result_and_debt_follow_balance_against_received(path, group):
     assert [balances.has_debt(m) for m in (ben_m, carl_m, anna_m)] == [False, True, False]
 
 
-def test_open_stakes_count_against_the_result_until_settled(path, group):
+def test_open_stakes_are_not_lost_until_settled(path, group):
+    """Decided: an open stake still counts as the member's (it carries over at Repaid)."""
     anna, ben, _, _, group_id = group
     event = service.create_event(anna, "Rain tomorrow", CLOSE, NOW, path=path)
     service.place_bet(ben, event.id, "yes", Decimal("30"), NOW, path)
-    member = auth.user_in_group(storage.load_data(path), ben, group_id)
-    assert balances.period_result(member) == Decimal("-30.00")
+    data = storage.load_data(path)
+    member = auth.user_in_group(data, ben, group_id)
+    stake = Decimal(balances.open_stakes(data, group_id)[ben]) / 100
+    assert balances.period_result(member, stake) == 0
+    assert not balances.has_debt(member, stake)
+    assert balances.period_result(member) == Decimal("-30.00")  # without the open stake

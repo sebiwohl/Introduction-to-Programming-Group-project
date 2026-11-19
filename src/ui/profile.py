@@ -92,7 +92,8 @@ def _rank_note(page: PageData, row: LeaderboardRow) -> str:
 def _main_tiles(page: PageData, me: MemberStats, profile: ProfileStats,
                 row: Optional[LeaderboardRow]) -> str:
     """Return the Coins, Ranking, Bets and Hit rate tiles."""
-    change = page.user.balance - page.user.received
+    mine = next((r for r in page.leaderboard if r.username == page.user.username), None)
+    change = mine.result if mine else page.user.balance - page.user.received
     coins_note = (f"{style.signed(change)} this period · "
                   f"received {style.money(page.user.received)}")
     if row is None:
