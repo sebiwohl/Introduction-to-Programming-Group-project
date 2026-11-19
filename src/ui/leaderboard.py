@@ -10,6 +10,11 @@ from src.stats import MemberStats
 from src.ui import style
 
 
+# Icon and color of each "Rank by" tab (see style.tab_colors).
+RANK_ICONS = {"Coins": ("toll", "gold"), "Hit rate": ("my_location", "green"),
+              "Best call": ("bolt", "orange"), "Streak": ("local_fire_department", "red")}
+
+
 def _hit_rate(member: MemberStats) -> str:
     """Return the hit rate like '70% · 7/10', or a dash without settled calls."""
     if member.hit_rate is None:
@@ -53,25 +58,34 @@ def _podium(page: PageData, member: Dict[str, MemberStats]) -> str:
         if rate is not None:
             detail += f" · {round(rate * 100)}% hit rate"
         cards.append(
-            f'<div class="ci-podium-card{kind}"><div class="ci-row">'
-            f'<span class="ci-podium-rank">{row.rank}</span>{style.avatar(row.username, is_me)}</div>'
+            f'<div class="ci-podium-card{kind}" style="--t:{index}"><div class="ci-row">'
+            f'<span class="ci-podium-rank">{style.rolling(str(row.rank))}</span>'
+            f'{style.avatar(row.username, is_me)}</div>'
             f'<div class="ci-podium-name">{name}</div><div class="ci-muted">{detail}</div></div>'
         )
     return f'<div class="ci-podium">{"".join(cards)}</div>'
 
 
 def _table(page: PageData, ordered: List[LeaderboardRow], member: Dict[str, MemberStats],
-           by_coins: bool) -> str:
-    """Return the ranking table; # is the coin rank, or the place in the chosen ranking."""
+           ranking: str) -> str:
+    """Return the ranking table; # is the coin rank, or the place in the chosen ranking.
+
+    The rows shuffle into order, again each time the ranking changes.
+    """
+    by_coins = ranking == "Coins"
     start = page.group.start_balance
     rows = []
+    count = len(ordered)
+    variant = stats.RANKINGS.index(ranking) if ranking in stats.RANKINGS else 0
     for place, row in enumerate(ordered, start=1):
         is_me = row.username == page.user.username
         stats_of = member.get(row.username, MemberStats())
         change = row.balance - start
         change_css = "ci-gain" if change > 0 else ""
         rows.append(
-            f'<tr{" class=ci-me" if is_me else ""}><td><b>{row.rank if by_coins else place}</b></td>'
+            f'<tr class="ci-shuffle{" ci-me" if is_me else ""}" '
+            f'style="{style.shuffle_style(place - 1, count, variant)}">'
+            f"<td>{style.rank_badge(row.rank if by_coins else place)}</td>"
             f"<td>{style.who(row.username, is_me, row.is_admin)}</td>"
             f"<td><b>{style.money(row.balance)}</b></td>"
             f'<td><span class="{change_css}">{style.signed(change)}</span></td>'
@@ -167,13 +181,13 @@ def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
     """Draw the Leaderboard page."""
     style.show(style.heading("Leaderboard", _kicker(page)))
     style.show(_podium(page, member))
-    label_col, pills_col = st.columns([1, 2], vertical_alignment="center")
-    style.show(where=label_col, markup='<div class="ci-label">Rank by</div>')
-    with pills_col:
-        ranking = st.radio("Rank by", stats.RANKINGS, horizontal=True, key="pills_rank",
-                           label_visibility="collapsed")
+    style.show('<div class="ci-label" style="margin-bottom:4px">Rank by</div>')
+    style.tab_colors("tabs_rank", [RANK_ICONS[r][1] for r in stats.RANKINGS])
+    ranking = st.radio("Rank by", stats.RANKINGS, horizontal=True, key="tabs_rank",
+                       label_visibility="collapsed",
+                       format_func=lambda r: style.icon_label(RANK_ICONS[r][0], r))
     ordered = stats.rank_members(page.leaderboard, member, ranking)
-    style.show(_table(page, ordered, member, ranking == "Coins"))
+    style.show(_table(page, ordered, member, ranking))
     st.write("")
     left, right = st.columns(2, gap="medium")
     style.show(where=left, markup=_head_to_head(page, member))

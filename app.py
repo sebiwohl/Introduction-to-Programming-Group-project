@@ -72,16 +72,17 @@ def show_app(page: PageData, now: datetime) -> None:
     me = member.get(page.user.username, stats.MemberStats())
     choice = nav.top_bar(page, me, lambda: events.new_event_dialog(page.user, now))
     show_flash()
-    if choice == nav.MY_BETS:
-        my_bets.my_bets_page(page, me)
-    elif choice == nav.LEADERBOARD:
-        leaderboard.leaderboard_page(page, member)
-    elif choice == nav.PROFILE:
-        profile.profile_page(page, me)
-    elif choice == nav.GROUP:
-        group.group_page(page)
-    else:
-        events.events_page(page, me, now)
+    with st.container(key=nav.page_key(choice)):  # fades in when the page changes
+        if choice == nav.MY_BETS:
+            my_bets.my_bets_page(page, me)
+        elif choice == nav.LEADERBOARD:
+            leaderboard.leaderboard_page(page, member)
+        elif choice == nav.PROFILE:
+            profile.profile_page(page, me)
+        elif choice == nav.GROUP:
+            group.group_page(page)
+        else:
+            events.events_page(page, me, now)
 
 
 def main() -> None:

@@ -253,21 +253,23 @@ def standing_card(page: PageData, me: MemberStats) -> str:
         lines.append(f'<div class="ci-streak" style="font-size:.8rem;font-weight:700;margin-top:8px">'
                      f"{style.FLAME} {me.streak} correct {calls} in a row</div>")
     return (
-        f'<div class="ci-card"><div class="ci-kicker">Your standing</div>'
-        f'<div style="margin-top:8px"><span class="ci-big">#{mine.rank}</span> '
+        f'<div class="ci-card ci-standing"><div class="ci-kicker">Your standing</div>'
+        f'<div style="margin-top:8px"><span class="ci-big">{style.rolling(f"#{mine.rank}")}</span> '
         f'<span class="ci-muted">of {len(rows)} · {style.money(mine.balance)} coins</span></div>'
         + "".join(lines) + "</div>"
     )
 
 
 def board_rows(page: PageData) -> str:
-    """Return the compact leaderboard lines; the viewer's own line is shaded."""
+    """Return the compact leaderboard lines with medal ranks; they shuffle into order on load."""
     lines = []
-    for row in page.leaderboard:
+    count = len(page.leaderboard)
+    for index, row in enumerate(page.leaderboard):
         is_me = row.username == page.user.username
         extra = " ci-board-me" if is_me else ""
         lines.append(
-            f'<div class="ci-board-row{extra}"><span class="ci-rank">{row.rank}</span>'
+            f'<div class="ci-board-row ci-shuffle{extra}" style="{style.shuffle_style(index, count)}">'
+            f"{style.rank_badge(row.rank)}"
             f"{style.who(row.username, is_me, row.is_admin)}<b>{style.money(row.balance)}</b></div>"
         )
     return "".join(lines)
@@ -298,16 +300,37 @@ def _side_column(page: PageData, me: MemberStats) -> None:
     style.show(_nudge_card(page))
 
 
+# Icon and color of each feed tab (see style.tab_colors).
+TAB_ICONS = {
+    "All": ("apps", "yellow"),
+    "Hot bets": ("local_fire_department", "orange"),
+    "Open": ("lock_open", "green"),
+    "Closing soon": ("timer", "red"),
+    "Awaiting result": ("hourglass_top", "blue"),
+    "Done": ("check_circle", "green"),
+}
+
+
+def _tab_label(choice: str) -> str:
+    """Return a feed tab's label with its icon, e.g. a fire before 'Hot bets'."""
+    return style.icon_label(TAB_ICONS.get(choice, ("", ""))[0], choice)
+
+
 def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
     """Draw the Feed: group name, win banner, filter tabs and events; cards on the right."""
     style.show(style.heading(page.group.name, _feed_kicker(page.events)))
     left, right = st.columns([2.5, 1], gap="large")
     with left:
         style.show(_win_banner(page, me))
+        style.tab_colors(FILTER_KEY, [TAB_ICONS[f][1] for f in stats.FEED_FILTERS])
         choice = st.radio("Show", stats.FEED_FILTERS, horizontal=True, key=FILTER_KEY,
-                          label_visibility="collapsed")
-        shown = stats.feed_order(stats.filter_events(page.events, choice, now))
-        if not shown:
+                          label_visibility="collapsed", format_func=_tab_label)
+        shown = stats.filter_events(page.events, choice, now, len(page.leaderboard))
+        if choice != "Hot bets":
+            shown = stats.feed_order(shown)
+        if not shown and choice == "Hot bets":
+            st.info("No hot bets right now. A bet gets hot once half the group has joined it.")
+        elif not shown:
             st.info("Nothing here yet. Press New event at the top to start one.")
         mine = bets_by_event(page.my_bets)
         biggest = _biggest_pool_id(page.events)
