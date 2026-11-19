@@ -93,7 +93,8 @@ class EventSummary:
     event and who backed which side (largest stake first). A names event has
     one OptionRow per option instead of the yes/no numbers (those stay 0 and
     None), and once resolved, paid_odds is what each coin on a winning option
-    paid (None if every stake was refunded).
+    paid (None if every stake was refunded). poll is the event's running poll
+    (only while the event is paused), else None.
     """
 
     event: Event
@@ -107,6 +108,7 @@ class EventSummary:
     bettors: List[Bettor] = field(default_factory=list)
     options: List[OptionRow] = field(default_factory=list)
     paid_odds: Optional[float] = None
+    poll: Optional[Poll] = None
 
 
 @dataclass
@@ -336,7 +338,11 @@ def _feed(state: _State, user: User) -> List[EventSummary]:
         (e for e in events if e.status != STATUS_OPEN),
         key=lambda e: e.close_time, reverse=True,
     )
-    return [_summarize(state, e, user) for e in open_events + other_events]
+    running = {poll.event_id: poll for poll in state.polls if poll.result is None}
+    summaries = [_summarize(state, e, user) for e in open_events + other_events]
+    for summary in summaries:
+        summary.poll = running.get(summary.event.id)
+    return summaries
 
 
 def _bet_history(state: _State, user: User) -> List[BetRecord]:
