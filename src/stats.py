@@ -358,7 +358,7 @@ def nudge(summaries: List[EventSummary], username: str) -> Optional[Nudge]:
     side = SIDE_YES if best.stake_yes >= best.stake_no else SIDE_NO
     lead = best.stake_yes if side == SIDE_YES else best.stake_no
     return Nudge(summary=best, side=side, share=round(lead / best.pool * 100),
-                 bettors=len(names), label=side.upper())
+                 bettors=len(names), label=betting.side_label(best.event, side))
 
 
 @dataclass

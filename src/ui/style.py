@@ -659,19 +659,26 @@ def who(name: str, is_me: bool, is_admin: bool = False) -> str:
 
 
 def odds_boxes(odds_yes: Optional[float], odds_no: Optional[float], final: bool = False,
-               winner: Optional[str] = None) -> str:
-    """Return the YES and NO odds boxes; final odds are drawn neutral, the winner outlined."""
+               winner: Optional[str] = None, labels: tuple = ("YES", "NO")) -> str:
+    """Return the YES and NO odds boxes; final odds are drawn neutral, the winner outlined.
+
+    labels name the two sides (OVER and UNDER for an over/under event).
+    """
     boxes = []
-    for side, odds in (("yes", odds_yes), ("no", odds_no)):
+    for side, odds, label in (("yes", odds_yes, labels[0]), ("no", odds_no, labels[1])):
         classes = f"ci-odd ci-odd-{side}" + (" ci-odd-final" if final else "")
         classes += " ci-odd-win" if winner == side else ""
         number = f"{odds:.2f}" if odds else "—"
-        boxes.append(f'<div class="{classes}"><b>{number}</b><span>{side.upper()}</span></div>')
+        boxes.append(f'<div class="{classes}"><b>{number}</b><span>{esc(label)}</span></div>')
     return f'<div class="ci-odds">{"".join(boxes)}</div>'
 
 
-def stake_bar(stake_yes: Decimal, stake_no: Decimal, middle: str = "", grey: bool = False) -> str:
-    """Return the labels and the two-colour bar showing how the pool splits."""
+def stake_bar(stake_yes: Decimal, stake_no: Decimal, middle: str = "", grey: bool = False,
+              labels: tuple = ("YES", "NO")) -> str:
+    """Return the labels and the two-colour bar showing how the pool splits.
+
+    labels name the two sides (OVER and UNDER for an over/under event).
+    """
     pool = stake_yes + stake_no
     mid = f'<span class="ci-split-mid">{esc(middle)}</span>' if middle else ""
     if pool == 0:
@@ -679,8 +686,9 @@ def stake_bar(stake_yes: Decimal, stake_no: Decimal, middle: str = "", grey: boo
                 '<div class="ci-bar"><div class="ci-bar-empty"></div></div>')
     yes = round(stake_yes / pool * 100)
     labels = (
-        f'<div class="ci-split"><span class="ci-yes">YES {yes}% · {money(stake_yes)} coins'
-        f'</span>{mid}<span class="ci-no">{money(stake_no)} coins · {100 - yes}% NO</span></div>'
+        f'<div class="ci-split"><span class="ci-yes">{esc(labels[0])} {yes}% · {money(stake_yes)} '
+        f'coins</span>{mid}<span class="ci-no">{money(stake_no)} coins · {100 - yes}% '
+        f'{esc(labels[1])}</span></div>'
     )
     parts = []
     if stake_yes:

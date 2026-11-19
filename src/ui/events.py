@@ -22,8 +22,18 @@ from src.storage import StorageError
 from src.ui.actions import FLASH_KEY, attempt
 
 SIDES = (SIDE_YES, SIDE_NO)
+
+
+def _labels(event) -> tuple:
+    """Return the short names of the two sides: OVER / UNDER or YES / NO."""
+    return ("OVER", "UNDER") if betting.is_over_under(event) else ("YES", "NO")
+
+
+def _short(event, side: str) -> str:
+    """Return the short name of one side (OVER, UNDER, YES or NO)."""
+    return _labels(event)[0 if side == SIDE_YES else 1]
 FILTER_KEY = "tabs_feed"
-KIND_CHOICES = ("Yes / No", "Names")
+KIND_CHOICES = ("Yes / No", "Names", "Over / Under")
 WINNER_CHOICES = ("One winner", "Several can win")
 SEVERAL_HELP = ("Several names can win. Everyone who backed a winning name shares the whole pool, "
                 "so a name's odds are the most it can pay: the more names win, the less each pays.")
@@ -107,6 +117,11 @@ def _tags(summary: EventSummary, biggest: bool) -> str:
         # the same pill as a yes/no result ("yes won")
         pills = style.pill("Resolved", "resolved") + style.pill(f"{service.winner_label(event)} won", SIDE_YES)
         meta = f"Closed {style.when(event.close_time)}"
+    elif event.status == STATUS_RESOLVED and betting.is_over_under(event):
+        result = (style.pill(f"{service.winner_label(event)} won", event.outcome)
+                  if event.outcome else style.pill(service.winner_label(event), "resolved"))
+        pills = style.pill("Resolved", "resolved") + result
+        meta = f"Closed {style.when(event.close_time)}"
     elif event.status == STATUS_RESOLVED:
         side = event.outcome or SIDE_YES
         pills = style.pill("Resolved", "resolved") + style.pill(f"{side} won", side)
@@ -117,7 +132,10 @@ def _tags(summary: EventSummary, biggest: bool) -> str:
 
 
 def _mode_pill(event) -> str:
-    """Return the 'One winner' / 'Several can win' pill of a names event (nothing for yes/no)."""
+    """Return the 'One winner' / 'Several can win' pill of a names event, the line of an
+    over/under event, or nothing for yes/no."""
+    if betting.is_over_under(event):
+        return style.pill(f"Over / under {event.line}", "refunded")
     if not betting.is_names_event(event):
         return ""
     if not event.multi_winner:
@@ -190,9 +208,10 @@ def _event_head(user: User, summary: EventSummary, records: List[BetRecord], big
         f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest)}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
         f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div>'
-        f"{style.odds_boxes(summary.odds_yes, summary.odds_no, settled, winner)}</div>"
+        f"{style.odds_boxes(summary.odds_yes, summary.odds_no, settled, winner, _labels(event))}"
+        "</div>"
         + style.stake_bar(summary.stake_yes, summary.stake_no, middle,
-                          grey=event.status == STATUS_PAUSED)
+                          grey=event.status == STATUS_PAUSED, labels=_labels(event))
     )
 
 
@@ -204,7 +223,8 @@ def _side_panel(user: User, summary: EventSummary, side: str) -> str:
         f"<b>{style.money(b.stake)}</b></div>"
         for b in bettors
     ) or '<div class="ci-muted">Nobody yet.</div>'
-    label = f"{side.upper()} · {len(bettors)} member{'s' if len(bettors) != 1 else ''}"
+    label = (f"{style.esc(betting.side_label(summary.event, side))} · {len(bettors)} "
+             f"member{'s' if len(bettors) != 1 else ''}")
     return f'<div class="ci-side"><div class="ci-label ci-{side}">{label}</div>{rows}</div>'
 
 
@@ -251,14 +271,14 @@ def _bet_form(user: User, summary: EventSummary, now: datetime) -> None:
         )
         pressed = [
             side for column, side in ((yes_col, SIDE_YES), (no_col, SIDE_NO))
-            if column.form_submit_button(f"Bet {side.upper()}", key=f"{side}_{event.id}",
+            if column.form_submit_button(f"Bet {_short(event, side)}", key=f"{side}_{event.id}",
                                          width="stretch")
         ]
     for side in pressed:
         amount = Decimal(f"{stake:.2f}")
         attempt(
             lambda: service.place_bet(user.id, event.id, side, amount, now),
-            f"Bet placed: {style.money(amount)} on {side.upper()}.",
+            f"Bet placed: {style.money(amount)} on {betting.side_label(event, side)}.",
         )
         st.rerun()
 
@@ -365,6 +385,42 @@ def _confirm_side_result(user: User, event_id: str, title: str, side: str) -> No
             f"Result set to {side.upper()}. Winners are paid out.",
         )
         st.rerun()
+
+
+@st.dialog("Set the result")
+def _confirm_number_result(user: User, event, actual: Decimal) -> None:
+    """Ask 'Are you sure?' before an over/under result is saved, as it cannot be undone."""
+    if actual == event.line:
+        effect = f"Exactly on the line ({event.line}): every stake is refunded."
+    else:
+        effect = f"{'OVER' if actual > event.line else 'UNDER'} {event.line} wins."
+    style.show(
+        f'<div style="font-weight:800;font-size:1.05rem">{style.esc(event.title)}</div>'
+        f'<p style="margin:10px 0 4px">Actual number: <b>{actual}</b> · {effect}</p>'
+        '<p class="ci-muted">Are you sure? Resolving cannot be undone.</p>'
+    )
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="number_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Yes, set the result", key="number_confirm", type="primary",
+                          width="stretch"):
+        attempt(lambda: service.resolve_over_under(user.id, event.id, actual, _now()),
+                f"Result set: {actual}. {effect}")
+        st.rerun()
+
+
+def _over_under_resolve_row(user: User, summary: EventSummary) -> None:
+    """Draw the field for the actual number of a closed over/under event."""
+    event = summary.event
+    label_col, number_col, button_col = st.columns([1.2, 1, 1], vertical_alignment="center")
+    style.show(where=label_col, markup=f'<div class="ci-label">Actual number '
+                                       f'<span class="ci-muted">· line {event.line}</span></div>')
+    actual = number_col.number_input("Actual number", value=float(event.line), step=1.0,
+                                     format="%.2f", key=f"actual_{event.id}",
+                                     label_visibility="collapsed")
+    if button_col.button("Set the result", key=f"number_result_{event.id}", width="stretch"):
+        # same cleaning as the stored number, so 11.00 shows as 11
+        _confirm_number_result(user, event, betting.clean_number(Decimal(f"{actual:.2f}"), "result"))
 
 
 def _resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
@@ -492,6 +548,8 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
         elif event.status == STATUS_CLOSED and _may_resolve(user, summary):
             if names:
                 _names_resolve_row(user, summary)
+            elif betting.is_over_under(event):
+                _over_under_resolve_row(user, summary)
             else:
                 _resolve_row(user, summary, now)
         if event.status in (STATUS_OPEN, STATUS_PAUSED):
@@ -708,12 +766,14 @@ def _typed_names(text: str) -> List[str]:
 
 @st.dialog("New event")
 def new_event_dialog(user: User, now: datetime) -> None:
-    """Show the form that creates a new event in a pop-up: yes / no, or names to pick from."""
+    """Show the form that creates a new event in a pop-up: yes / no, names, or over / under."""
     today = now.astimezone(style.APP_TIMEZONE).date()
     kind = st.radio("Type", KIND_CHOICES, horizontal=True, key="new_event_kind")
     names_event = kind == KIND_CHOICES[1]
+    over_under = kind == KIND_CHOICES[2]
     with st.form("create_event", border=False):
-        example = "Who is going to show up late?" if names_event else "Will Ben finish the marathon?"
+        example = ("Who is going to show up late?" if names_event else
+                   "Goals in Sunday's derby" if over_under else "Will Ben finish the marathon?")
         title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example,
                               key="new_event_title")  # the key keeps the text when the type changes
         description = st.text_area("Details (optional)", key="new_event_details",
@@ -725,6 +785,12 @@ def new_event_dialog(user: User, now: datetime) -> None:
             typed = st.text_area("Other names, one per line", height=90,
                                  placeholder="People who are not in the app")
             st.caption("2 to 10 names. They can't be changed after the event is created.")
+        if over_under:
+            line = st.number_input("Line", value=2.5, step=0.5, format="%.2f",
+                                   help="Members bet over or under this number. Choose a half "
+                                        "(like 2.5) to avoid a result exactly on the line, "
+                                        "which refunds everyone.")
+            st.caption("The line can't be changed after the event is created.")
         date_col, time_col = st.columns(2)
         day: date = date_col.date_input("Betting closes on", min_value=today,
                                         value=today + timedelta(days=1))
@@ -733,9 +799,11 @@ def new_event_dialog(user: User, now: datetime) -> None:
             closes = datetime.combine(day, clock, tzinfo=style.APP_TIMEZONE)
             options = list(picked) + _typed_names(typed) if names_event else None
             several = names_event and mode == WINNER_CHOICES[1]
+            line_value = Decimal(f"{line:.2f}") if over_under else None
             if attempt(
                 lambda: service.create_event(user.id, title, closes, _now(), description,
-                                             options=options, multi_winner=several),
+                                             options=options, multi_winner=several,
+                                             line=line_value),
                 "Event created.",
             ):
                 st.rerun()

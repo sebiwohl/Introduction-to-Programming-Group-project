@@ -37,6 +37,7 @@ from src.convert import (
 from src.models import (
     AVATARS,
     TYPE_NAMES,
+    TYPE_OVER_UNDER,
     TYPE_YES_NO,
     SIDE_NO,
     SIDE_YES,
@@ -375,6 +376,10 @@ def winner_label(event: Event) -> str:
     """Return the result of a resolved event as text, like 'YES' or 'Marta and João'."""
     if event.status != STATUS_RESOLVED:
         return ""
+    if betting.is_over_under(event):
+        if event.outcome is None:
+            return f"ON THE LINE ({event.result_value}), REFUNDED"
+        return f"{betting.side_label(event, event.outcome)} ({event.result_value})"
     if not betting.is_names_event(event):
         return (event.outcome or "").upper()
     return join_names([betting.side_label(event, option_id) for option_id in event.winners])
@@ -524,10 +529,13 @@ def create_event(
     path=None,
     options: Optional[List[str]] = None,
     multi_winner: bool = False,
+    line=None,
 ) -> Event:
     """Create an event in the user's group and return it.
 
-    Without options it is a yes/no event. With options it is a names event:
+    Without options or line it is a yes/no event. With a line (a number with at
+    most 2 decimals) it is an over/under event: members bet over or under it,
+    and the line cannot change. With options it is a names event:
     2 to 10 names (trimmed, not empty, at most 40 characters, no duplicates
     ignoring case), and multi_winner says whether several can win. The names
     cannot change afterwards. The title is required, both texts are trimmed
@@ -545,10 +553,14 @@ def create_event(
         raise BettingError("Choose one winner or several winners.")
     if multi_winner and options is None:
         raise BettingError("Several winners are only possible on a names event.")
+    if options is not None and line is not None:
+        raise BettingError("Choose names or over/under, not both.")
     names = {}
     if options is not None:
         names = {"event_type": TYPE_NAMES, "options": betting.make_options(options),
                  "multi_winner": multi_winner}
+    if line is not None:
+        names = {"event_type": TYPE_OVER_UNDER, "line": betting.clean_number(line, "line")}
     with storage.transaction(path) as data:
         state = _unpack(data)
         user = _get_user(state, user_id)
@@ -623,6 +635,29 @@ def resolve_event(
         auth.require_permission(user, auth.RESOLVE_EVENT, event)
         total = betting.resolve_event(
             event, _bets_on(state, event.id), outcome, state.users, now
+        )
+        _pack(state, data)
+        _announce_wins(data, event, _bets_on(state, event.id), now)
+    return total
+
+
+def resolve_over_under(
+    user_id: str, event_id: str, actual, now: datetime, path=None
+) -> Decimal:
+    """Resolve an over/under event by the actual number, pay out and save; return total paid.
+
+    Same permissions and timing as resolve_event. Above the line "over" wins,
+    below it "under" wins, exactly on the line every stake is refunded.
+    """
+    _require_aware(now, "now")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        _close_expired(state, now)
+        user = _get_user(state, user_id)
+        event = _get_event_for(state, user, event_id)
+        auth.require_permission(user, auth.RESOLVE_EVENT, event)
+        total = betting.resolve_over_under(
+            event, _bets_on(state, event.id), actual, state.users, now
         )
         _pack(state, data)
         _announce_wins(data, event, _bets_on(state, event.id), now)
