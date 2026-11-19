@@ -26,6 +26,10 @@ AMOUNT_COLOUR = "#EA580C"  # the orange accent: readable on white, unlike the li
 
 CSS = (
     '[data-testid="stElementContainer"]:has(.ci-confetti){position:absolute;width:0;height:0;margin:0}'
+    # The page box fades and rises in (style.py, st-key-page_*). While a box has a transform
+    # animation, a position:fixed child is placed inside that box instead of on the screen, so
+    # the confetti would fill the whole tall page. While confetti shows, the page skips that.
+    '[class*="st-key-page_"]:has(.ci-confetti){animation:none!important;transform:none!important}'
     ".ci-confetti{position:fixed;inset:0;z-index:1000000;pointer-events:none;overflow:hidden;"
     f"animation:ci-confetti-end {LENGTH}s linear forwards}}"
     "@keyframes ci-confetti-end{0%,90%{opacity:1}100%{opacity:0;visibility:hidden}}"

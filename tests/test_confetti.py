@@ -30,6 +30,11 @@ def test_markup_has_every_piece_and_never_blocks_clicks():
     assert 'aria-hidden="true"' in html
 
 
+def test_page_animation_is_paused_so_the_confetti_covers_the_screen():
+    """A transform animation on the page box would trap the fixed layer inside the page."""
+    assert '[class*="st-key-page_"]:has(.ci-confetti){animation:none!important;' in confetti.CSS
+
+
 def test_markup_respects_reduced_motion():
     assert "@media (prefers-reduced-motion:reduce){.ci-confetti{display:none}}" in confetti.markup()
 
