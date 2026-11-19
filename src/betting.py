@@ -1,8 +1,9 @@
 """Core betting logic: pool, odds, placing bets and resolving events.
 
-Two kinds of event share the same pari-mutuel pool and rounding rule: yes/no
-events, and names events whose options are names (people, for example). The
-names functions sit in their own section below.
+Three kinds of event share the same pari-mutuel pool and rounding rule: yes/no
+events, over/under events (stored with the same two sides: yes = over, no =
+under) and names events whose options are names (people, for example). The
+over/under and names functions sit in their own sections below.
 
 Pure functions only: no Streamlit, no file access. Money is a Decimal with at
 most 2 decimal places (cents). Floats are never used for money.
@@ -15,7 +16,10 @@ from typing import Dict, List, Optional, Union
 
 from src.models import (
     CENT,
+    SIDE_NO,
+    SIDE_YES,
     TYPE_NAMES,
+    TYPE_OVER_UNDER,
     MAX_OPTION_LENGTH,
     MAX_OPTIONS,
     MIN_OPTIONS,
@@ -248,11 +252,70 @@ def resolve_event(
     """
     if is_names_event(event):
         raise BettingError("Pick the winning option of this names event.")
+    if is_over_under(event):
+        raise BettingError("Enter the actual number for this over/under event.")
     _check_resolvable(event, now)
     _check_side(outcome)
     _check_bets_belong(event, bets, users)
     total_paid = _settle(bets, _compute_payouts(bets, outcome), users)
     event.outcome = outcome
+    event.status = STATUS_RESOLVED
+    return total_paid
+
+
+# --- over/under events --------------------------------------------------------
+
+MAX_LINE = Decimal("1000000")
+
+
+def is_over_under(event: Event) -> bool:
+    """Return True for an over/under event (yes = over the line, no = under)."""
+    return event.event_type == TYPE_OVER_UNDER
+
+
+def clean_number(value, name: str) -> Decimal:
+    """Return a line or result as a Decimal, or raise BettingError.
+
+    It must be a whole number or Decimal (no floats or booleans), finite, with
+    at most 2 decimals and at most a million either way.
+    """
+    if isinstance(value, (bool, float)) or not isinstance(value, (int, Decimal)):
+        raise BettingError(f"The {name} must be a number.")
+    value = Decimal(value)
+    if not value.is_finite() or value != value.quantize(CENT) or abs(value) > MAX_LINE:
+        raise BettingError(f"The {name} must be a number with at most 2 decimals.")
+    if value == value.to_integral_value():
+        return value.to_integral_value()  # 3.00 -> 3 (normalize would give 3E+0 for 300)
+    return value.normalize()  # 2.50 -> 2.5
+
+
+def resolve_over_under(
+    event: Event,
+    bets: List[Bet],
+    actual,
+    users: Dict[str, User],
+    now: datetime,
+) -> Decimal:
+    """Resolve an over/under event by the actual number; return the total paid out.
+
+    Above the line "over" (yes) wins, below it "under" (no) wins, and exactly
+    on the line every stake is refunded (the outcome then stays empty). The
+    number is kept as result_value. Same timing and payout rules as
+    resolve_event; nothing changes on error.
+    """
+    if not is_over_under(event):
+        raise BettingError("Only an over/under event is resolved by a number.")
+    _check_resolvable(event, now)
+    actual = clean_number(actual, "result")
+    _check_bets_belong(event, bets, users)
+    if actual == event.line:
+        outcome, payouts = None, _refund_all(bets)
+    else:
+        outcome = SIDE_YES if actual > event.line else SIDE_NO
+        payouts = _compute_payouts(bets, outcome)
+    total_paid = _settle(bets, payouts, users)
+    event.outcome = outcome
+    event.result_value = actual
     event.status = STATUS_RESOLVED
     return total_paid
 
@@ -304,9 +367,11 @@ def option_ids(event: Event) -> List[str]:
 
 
 def side_label(event: Event, side: str) -> str:
-    """Return how a side is shown: the option's name, or YES / NO."""
+    """Return how a side is shown: the option's name, OVER / UNDER with the line, or YES / NO."""
     if is_names_event(event):
         return next((o.name for o in event.options if o.id == side), "Unknown option")
+    if is_over_under(event):
+        return f"{'OVER' if side == SIDE_YES else 'UNDER'} {event.line}"
     return side.upper()
 
 

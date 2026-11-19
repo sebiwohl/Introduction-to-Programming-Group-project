@@ -408,12 +408,45 @@ def _check_event_type(event: Data) -> None:
             f"{label}.close_time must not be after event_time ({event['event_time']}), "
             f"got {event['close_time']}"
         )
+    if over_under:
+        _check_over_under_result(event)
+
+
+def _expected_over_under_outcome(event: Data):
+    """Return the outcome a resolved over/under result gives: yes (over), no (under) or None."""
+    actual, line = Decimal(event["result_value"]), Decimal(event["line"])
+    if actual == line:
+        return None
+    return "yes" if actual > line else "no"
+
+
+def _check_over_under_result(event: Data) -> None:
+    """Check that an over/under event has a result number exactly when resolved,
+    and that its outcome follows from it (on the line: no outcome, all refunded)."""
+    label = f"events[{event['id']}]"
+    resolved = event["status"] == "resolved"
+    if resolved and event["result_value"] is None:
+        raise StorageError(f"{label}.result_value must be set when resolved, got None")
+    if not resolved and event["result_value"] is not None:
+        raise StorageError(
+            f"{label}.result_value must be null unless resolved, got {event['result_value']!r}"
+        )
+    if resolved and event["outcome"] != _expected_over_under_outcome(event):
+        raise StorageError(
+            f"{label}.outcome must be {_expected_over_under_outcome(event)!r} for result "
+            f"{event['result_value']} and line {event['line']}, got {event['outcome']!r}"
+        )
 
 
 def _check_outcome(event: Data) -> None:
-    """Check that the outcome is set exactly when the event is resolved."""
+    """Check that the outcome is set exactly when the event is resolved.
+
+    An over/under result exactly on the line is resolved without an outcome
+    (every stake is refunded); _check_over_under_result checks those.
+    """
     label = f"events[{event['id']}]"
-    if event["status"] == "resolved" and event["outcome"] is None:
+    on_the_line = event["type"] == "over_under" and event["result_value"] is not None
+    if event["status"] == "resolved" and event["outcome"] is None and not on_the_line:
         raise StorageError(f"{label}.outcome must be yes or no when resolved, got None")
     if event["status"] != "resolved" and event["outcome"] is not None:
         raise StorageError(
