@@ -159,12 +159,14 @@ def _mode_pill(event) -> str:
             f'{WINNER_CHOICES[1]}<span class="ci-help">?</span></span>')
 
 
-def _sub_line(user: User, summary: EventSummary, records: List[BetRecord]) -> str:
+def _sub_line(user: User, summary: EventSummary, records: List[BetRecord], now: datetime) -> str:
     """Return the grey line under the title: creator, who is in, pool, your part."""
     event = summary.event
     creator = "you" if event.creator_id == user.id else summary.creator_name
     pool = f"pool {style.money(summary.pool)}"
-    if event.status == STATUS_CLOSED:
+    if event.status == STATUS_CLOSED and not _result_due(event, now):  # the time line says when
+        parts = [f"Created by {creator}", _my_calls(user, summary), pool]
+    elif event.status == STATUS_CLOSED:
         waiting = ("Waiting for you to set the result" if event.creator_id == user.id
                    else f"Waiting for {summary.creator_name} (creator) or the admin to set the result")
         parts = [waiting, _my_calls(user, summary), pool]
@@ -204,7 +206,7 @@ def _names_head(user: User, summary: EventSummary, records: List[BetRecord], big
     return (
         f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
-        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div></div>'
+        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div></div>'
         f'{note_line}<div class="ci-opts{look}">{rows}</div>'
     )
 
@@ -224,7 +226,7 @@ def _event_head(user: User, summary: EventSummary, records: List[BetRecord], big
     return (
         f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
-        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div>'
+        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div>'
         f"{style.odds_boxes(summary.odds_yes, summary.odds_no, settled, winner, _labels(event))}"
         "</div>"
         + style.stake_bar(summary.stake_yes, summary.stake_no, middle,
