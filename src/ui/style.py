@@ -98,6 +98,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-pill-refunded {border-color: var(--ci-line); color: var(--ci-text);}
 .ci-pill-yes {background: var(--ci-yes-soft); color: var(--ci-yes);}
 .ci-pill-no {background: var(--ci-no-soft); color: var(--ci-no);}
+.ci-pill-mine {background: var(--ci-yes); color: #FFFFFF;}
 .ci-admin {display: inline-flex; align-items: center; gap: 3px; background: var(--ci-ink);
   color: #FFFFFF; border-radius: 4px; padding: 1px 6px; font-size: 0.6rem; font-weight: 800;
   letter-spacing: 0.06em; vertical-align: middle; margin-left: 6px;}
@@ -273,14 +274,42 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   padding: 16px 18px; gap: 0.4rem;}
 .st-key-invite .ci-kicker {color: #B4B4BC;}
 .st-key-invite [data-testid="stCode"] pre {background: transparent; padding: 0;}
+/* the copy button sits on the "Invite friends" line, so it never covers the code */
+.st-key-invite [data-testid="stCode"] div:has(> div > [data-testid="stElementToolbarButton"]) {
+  top: -34px !important; right: 0 !important;}
+.st-key-invite [data-testid="stCode"] div:has(> [data-testid="stElementToolbarButton"]) {
+  background: transparent !important; box-shadow: none !important; border: none !important;}
 .st-key-invite [data-testid="stCode"] code {color: #FFFFFF; font-family: "Inter", sans-serif !important;
   font-size: 2.2rem; font-weight: 900; letter-spacing: 0.04em;}
-.st-key-invite [data-testid="stCode"] button {filter: invert(1);}
+/* the copy button: white on the orange card, always visible */
+.st-key-invite [data-testid="stCode"] button {filter: none; opacity: 1 !important;
+  background: rgba(255, 255, 255, 0.22) !important; color: #FFFFFF !important; border-radius: 8px;}
+.st-key-invite [data-testid="stCode"] button:hover {background: rgba(255, 255, 255, 0.38) !important;}
+.st-key-invite [data-testid="stCode"] div:has(button), .st-key-invite [data-testid="stCode"] button,
+.st-key-invite [data-testid="stCode"] span:has(> button) {opacity: 1 !important;
+  visibility: visible !important;}
 .ci-member {display: flex; align-items: center; gap: 12px; padding: 9px 0;
   border-bottom: 1px solid var(--ci-line);}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
-.ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
+/* How it works: pages turned by the arrows beside the dots at the bottom (never over the text) */
+.st-key-card_howto {position: relative; padding-bottom: 18px;}
+.st-key-howto_prev, .st-key-howto_next {position: absolute; bottom: 6px; width: 32px; height: 30px;
+  z-index: 2; margin: 0 !important;}
+.st-key-howto_prev {left: 10px;} .st-key-howto_next {right: 10px;}
+.st-key-howto_prev *:has(button), .st-key-howto_next *:has(button), .st-key-howto_prev button,
+.st-key-howto_next button {height: 100% !important; width: 100% !important;}
+.st-key-howto_prev button, .st-key-howto_next button {background: transparent !important;
+  border: none !important; box-shadow: none !important; border-radius: 8px; padding: 0;
+  min-height: 0; color: var(--ci-muted) !important; justify-content: center; align-items: center;}
+.st-key-howto_prev button:hover, .st-key-howto_next button:hover {color: var(--ci-brand) !important;
+  background: var(--ci-brand-soft) !important;}
+.st-key-howto_prev button span, .st-key-howto_next button span {font-size: 1.4rem !important;}
+.ci-howto-title {font-weight: 800; font-size: 0.95rem; margin: 8px 0 4px;}
+.ci-howto p {font-size: 0.8rem; line-height: 1.45; margin: 0 0 6px;}
+.ci-dots {display: flex; justify-content: center; gap: 6px; margin-top: 12px;}
+.ci-dot {width: 7px; height: 7px; border-radius: 50%; background: var(--ci-line);}
+.ci-dot-on {background: var(--ci-brand); width: 18px; border-radius: 4px;}
 .ci-profile {display: flex; align-items: center; gap: 16px;}
 .ci-tiles + .ci-tiles-more {margin-top: -12px;}
 .ci-rolling {display: inline-flex; align-items: flex-start; line-height: 1;}
@@ -388,10 +417,12 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-podium .ci-animal {font-size: 1.4rem;}
 .st-key-card_profile [data-testid="stHorizontalBlock"] {align-items: center;}
 .st-key-avatars button {padding: 2px 0 !important; min-height: 56px;}
-.st-key-logout_profile button {background: #D92D20 !important; border-color: #D92D20 !important;
-  color: #FFFFFF !important;}
-.st-key-logout_profile button:hover {background: #B42318 !important; border-color: #B42318 !important;}
-.st-key-logout_profile button p, .st-key-logout_profile button span {color: #FFFFFF !important;}
+.st-key-logout_profile button, .st-key-leave_group_btn button {background: #D92D20 !important;
+  border-color: #D92D20 !important; color: #FFFFFF !important;}
+.st-key-logout_profile button:hover, .st-key-leave_group_btn button:hover {background: #B42318 !important;
+  border-color: #B42318 !important;}
+.st-key-logout_profile button p, .st-key-logout_profile button span,
+.st-key-leave_group_btn button p, .st-key-leave_group_btn button span {color: #FFFFFF !important;}
 .st-key-avatars button p {font-size: 2rem !important; line-height: 1.2;}
 .ci-profile-name {font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em;
   display: flex; align-items: center; gap: 8px;}
@@ -490,6 +521,9 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   border-radius: 18px; box-shadow: var(--ci-shadow); padding: 18px 20px;}
 [class*="st-key-ev_"] [data-testid="stForm"], [class*="st-key-wait_"] [data-testid="stForm"] {
   background: transparent; box-shadow: none; border: none !important; padding: 0;}
+/* the Repaid form sits inside the repayment card: no second card around it */
+.st-key-card_repayment [data-testid="stForm"] {background: transparent; box-shadow: none;
+  border: none !important; padding: 0;}
 [data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
 [data-testid="stTextAreaRootElement"], [data-testid="stDateInputField"],
 [data-baseweb="input"], [data-baseweb="input"] > div, [data-baseweb="input"] input,

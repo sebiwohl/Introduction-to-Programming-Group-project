@@ -1,5 +1,5 @@
 """The Leaderboard page: top three, the full ranking, head to head, group records
-and the repayment window."""
+and the repayment box."""
 
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -236,8 +236,10 @@ def _repaid_form(page: PageData) -> None:
 
 
 def _repayment_window(page: PageData) -> None:
-    """Draw the repayment window; opening and closing it changes nothing."""
-    with st.expander("Repayment: who owes whom since last repayment"):
+    """Draw the repayment box: who owes whom since the last repayment, and the admin's Repaid."""
+    with st.container(key="card_repayment"):
+        style.show('<div class="ci-label">Repayment</div>')
+        st.caption("Who owes whom since the last repayment.")
         try:
             summary = balances.repayment_summary(page.user.id, page.group.id)
         except (BettingError, StorageError) as error:
@@ -254,4 +256,5 @@ def _repayment_window(page: PageData) -> None:
         st.caption("Copy this into the group chat (copy button on the right):")
         st.code(summary.text, language=None)
         if page.user.role == ROLE_ADMIN:
+            style.show('<div class="ci-label" style="margin-top:8px">Confirm repayment</div>')
             _repaid_form(page)

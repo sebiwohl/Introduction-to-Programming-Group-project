@@ -87,6 +87,11 @@ def _members_in(summary: EventSummary) -> int:
     return len({b.username for b in summary.bettors})
 
 
+def _i_bet(user: User, summary: EventSummary) -> bool:
+    """Return True if the user has a bet on the event."""
+    return any(b.username == user.username for b in summary.bettors)
+
+
 def _my_calls(user: User, summary: EventSummary) -> str:
     """Describe the user's stakes on one event, like 'you backed NO with 30'."""
     calls = [b for b in summary.bettors if b.username == user.username]
@@ -112,17 +117,15 @@ def _result_due(event, now: datetime) -> bool:
     return now >= event.event_time
 
 
-def _tags(summary: EventSummary, biggest: bool, now: datetime) -> str:
+def _tags(summary: EventSummary, biggest: bool, now: datetime, mine: bool = False) -> str:
     """Return the status pills and the time line at the top of an event.
 
-    When the event happens after betting closes, the line shows both times.
+    mine adds a "You bet" pill on an open or paused event the user has bet on.
     """
     event = summary.event
     if event.status == STATUS_OPEN:
         pills = style.pill("Open", "open") + (style.pill("Biggest pool", "big") if biggest else "")
         meta = f"Closes {style.when(event.close_time)}"
-        if event.event_time != event.close_time:
-            meta += f" · Event {style.when(event.event_time)}"
     elif event.status == STATUS_CLOSED and not _result_due(event, now):
         pills = style.pill("Awaiting result", "waiting")
         meta = f"Betting closed · result after {style.when(event.event_time)}"
@@ -143,6 +146,8 @@ def _tags(summary: EventSummary, biggest: bool, now: datetime) -> str:
         meta = f"Closed {style.when(event.close_time)}"
     else:
         pills, meta = style.pill(event.status, "paused"), "Betting paused"
+    if mine and event.status in (STATUS_OPEN, STATUS_PAUSED):
+        pills += style.pill("✓ You bet", "mine")
     return f'<div class="ci-ev-tags">{pills}{_mode_pill(event)}<span>{style.esc(meta)}</span></div>'
 
 
@@ -172,10 +177,8 @@ def _sub_line(user: User, summary: EventSummary, records: List[BetRecord], now: 
         parts = [waiting, _my_calls(user, summary), pool]
     elif event.status == STATUS_RESOLVED:
         parts = [f"Created by {creator}", pool, _my_result(records)]
-    else:
-        count = _members_in(summary)
-        members = f"{count} member{'s' if count != 1 else ''} in" if count else ""
-        parts = [f"Created by {creator}", members, pool, _my_calls(user, summary)]
+    else:  # open or paused: the "You bet" pill and See who bet show the user's part
+        parts = [f"Created by {creator}", f"Event {style.when(event.event_time)}", pool]
     return " · ".join(p for p in parts if p)
 
 
@@ -204,7 +207,7 @@ def _names_head(user: User, summary: EventSummary, records: List[BetRecord], big
         note = "No bets yet"
     note_line = f'<div class="ci-split"><span class="ci-split-mid">{note}</span></div>' if note else ""
     return (
-        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
+        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now, _i_bet(user, summary))}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
         f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div></div>'
         f'{note_line}<div class="ci-opts{look}">{rows}</div>'
@@ -224,7 +227,7 @@ def _event_head(user: User, summary: EventSummary, records: List[BetRecord], big
     middle = {STATUS_CLOSED: "Final odds · betting locked",
               STATUS_PAUSED: "Betting paused"}.get(event.status, "")
     return (
-        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
+        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now, _i_bet(user, summary))}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
         f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div>'
         f"{style.odds_boxes(summary.odds_yes, summary.odds_no, settled, winner, _labels(event))}"
@@ -588,7 +591,7 @@ def _head_main(user: User, summary: EventSummary, records: List[BetRecord], bigg
     event = summary.event
     description = (f'<div class="ci-ev-desc">{style.esc(event.description)}</div>'
                    if event.description else "")
-    return (f'<div class="ci-ev-main">{_tags(summary, biggest, now)}'
+    return (f'<div class="ci-ev-main">{_tags(summary, biggest, now, _i_bet(user, summary))}'
             f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
             f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div>')
 
