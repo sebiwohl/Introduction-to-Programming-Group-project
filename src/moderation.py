@@ -78,7 +78,9 @@ def _unrestricted_members(data: dict, group_id: str) -> set:
 def _delete_and_refund(data: dict, event: dict) -> None:
     """Mark the event deleted and give every unsettled stake back to its member.
 
-    Works for every event type, because it only uses each bet's stake.
+    Works for every event type, because it only uses each bet's stake. It credits
+    the membership in the event's own group; betting._refund_all/_settle work on
+    User objects, which carry only one group's balance, so they are not used here.
     """
     event["status"] = STATUS_DELETED
     balances = {m["user_id"]: m for m in data["memberships"]
