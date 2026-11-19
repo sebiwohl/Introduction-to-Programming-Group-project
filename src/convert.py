@@ -127,13 +127,15 @@ def find_membership(memberships: Iterable[dict], user_id: str) -> Optional[dict]
 
 
 def user_from_dict(data: dict, membership: Optional[dict] = None) -> User:
-    """Return a User from a stored dict, with group, role and balance from the membership."""
+    """Return a User from a stored dict, with group, role, balance and restriction
+    from the membership."""
     user = User(id=data["id"], username=data["username"], password_hash=data["password_hash"],
                 avatar=data.get("avatar", ""))
     if membership is not None:
         user.group_id = membership["group_id"]
         user.role = membership["role"]
         user.balance = cents_to_money(membership["balance"])
+        user.restricted = membership["restricted"]
     return user
 
 
