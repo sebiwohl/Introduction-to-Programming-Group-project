@@ -269,3 +269,12 @@ def test_closing_soon_means_within_12_hours():
     events = [summary("in", "open", [], hours=12), summary("out", "open", [], hours=12.1)]
     soon = [s.event.id for s in stats.filter_events(events, "Closing soon", NOW)]
     assert soon == ["in"]
+
+
+def test_feed_tabs_open_first_with_paused_and_past_bets():
+    events = [summary("open", "open", [], hours=5), summary("paused", "paused", [], hours=5),
+              summary("wait", "closed", [], hours=-1), summary("done", "resolved", [], "yes", hours=-5)]
+    ids = lambda choice: [s.event.id for s in stats.filter_events(events, choice, NOW)]  # noqa: E731
+    assert stats.FEED_FILTERS[0] == "Open" and "All" not in stats.FEED_FILTERS
+    assert ids("Open") == ["open", "paused"]  # a paused event's poll still needs votes
+    assert ids("Past bets") == ["done"]

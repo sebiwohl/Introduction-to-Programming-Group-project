@@ -152,10 +152,26 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 [class*="st-key-no_"] button:hover {border-color: var(--ci-no); color: var(--ci-no);}
 [class*="st-key-ev_"] [data-testid="stForm"], [class*="st-key-wait_"] [data-testid="stForm"] {
   padding: 0; border: none;}
-[class*="st-key-bets_"] details {border: none !important; background: transparent;}
-[class*="st-key-bets_"] summary {display: inline-flex; width: auto; padding: 4px 14px;
-  border: 1px solid var(--ci-line); border-radius: 999px; font-size: 0.82rem; font-weight: 600;}
-[class*="st-key-bets_"] [data-testid="stExpanderDetails"] {padding: 10px 0 0;}
+/* "See who bet": a small round button in the middle of a line, the arrow below the text */
+[class*="st-key-bets_"] details {border: none !important; background: transparent; overflow: hidden;}
+[class*="st-key-bets_"] summary {position: relative; display: flex; width: fit-content;
+  margin: 2px auto 0; padding: 4px 16px 0; border: 1px solid var(--ci-line); border-radius: 999px;
+  background: #FFFFFF; list-style: none; overflow: visible !important;}
+[class*="st-key-bets_"] summary::before, [class*="st-key-bets_"] summary::after {content: "";
+  position: absolute; top: 50%; width: 2000px; border-top: 1px solid var(--ci-line);}
+[class*="st-key-bets_"] summary::before {right: calc(100% + 1px);}
+[class*="st-key-bets_"] summary::after {left: calc(100% + 1px);}
+[class*="st-key-bets_"] summary:hover {border-color: var(--ci-brand);}
+[class*="st-key-bets_"] summary > span {flex-direction: column; align-items: center; gap: 0;}
+[class*="st-key-bets_"] summary > span > span:first-child {order: 2; margin: -2px 0 0;}
+[class*="st-key-bets_"] summary p {font-size: 0.72rem; font-weight: 600; margin: 0; line-height: 1.2;}
+[class*="st-key-bets_"] summary [data-testid="stIconMaterial"] {font-size: 1rem;
+  color: var(--ci-muted); transition: transform .15s;}
+[class*="st-key-bets_"] details:not([open]) summary [data-testid="stIconMaterial"] {
+  transform: rotate(90deg);}  /* the closed arrow points right: turn it down */
+[class*="st-key-bets_"] details[open] summary [data-testid="stIconMaterial"] {
+  transform: rotate(180deg);}  /* the open arrow points down: turn it up */
+[class*="st-key-bets_"] [data-testid="stExpanderDetails"] {padding: 10px 0 0; border: none !important;}
 .ci-sides {display: grid; grid-template-columns: 1fr 1fr; gap: 10px;}
 .ci-side {background: var(--ci-soft); border-radius: 12px; padding: 12px 14px;}
 .ci-side-row {display: flex; justify-content: space-between; align-items: center;
@@ -549,6 +565,70 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   color: var(--ci-brand);}
 /* the small box with the custom close day and time, next to the Betting closes dropdown */
 .st-key-custom_close {background: #FFF7ED; border-color: #FED7AA !important; padding: 8px 12px;}
+/* open events: the odds boxes are buttons that open the bet window */
+[class*="st-key-oddyes_"] button, [class*="st-key-oddno_"] button {width: 76px; min-height: 60px;
+  border-radius: 12px !important; padding: 6px 4px !important; transition: transform .12s;}
+[class*="st-key-oddyes_"] button {background: var(--ci-yes-soft) !important;
+  border: 1px solid #FBE3A6 !important;}
+[class*="st-key-oddno_"] button {background: var(--ci-no-soft) !important;
+  border: 1px solid #F6D3BF !important;}
+[class*="st-key-oddyes_"] button:hover, [class*="st-key-oddno_"] button:hover {
+  transform: translateY(-2px); box-shadow: 0 6px 14px rgba(154, 52, 18, .14);}
+[class*="st-key-oddyes_"] button p, [class*="st-key-oddno_"] button p {font-size: 0.62rem;
+  font-weight: 800; letter-spacing: 0.08em; color: var(--ci-muted); line-height: 1.3;}
+[class*="st-key-oddyes_"] button p strong, [class*="st-key-oddno_"] button p strong {
+  display: block; font-size: 1.3rem; letter-spacing: 0; line-height: 1.2;}
+[class*="st-key-oddyes_"] button p strong {color: var(--ci-yes);}
+[class*="st-key-oddno_"] button p strong {color: var(--ci-no);}
+/* open names events: the usual row, with an invisible button over it that opens the bet window */
+[class*="st-key-optrow_"] {position: relative; gap: 0;}
+[class*="st-key-optrow_"] .ci-opts {margin: 0;}
+[class*="st-key-optrow_"] [data-testid="stElementContainer"]:has(button) {position: absolute;
+  inset: 0; z-index: 2; width: 100% !important; height: 100%;}
+[class*="st-key-optrow_"] [data-testid="stElementContainer"]:has(button) > div,
+[class*="st-key-optrow_"] button {width: 100% !important; height: 100% !important;
+  opacity: 0; cursor: pointer;}
+[class*="st-key-optrow_"] .ci-opt {transition: border-color .15s, transform .15s, box-shadow .15s;}
+[class*="st-key-optrow_"]:hover .ci-opt {border-color: var(--ci-brand); transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(154, 52, 18, .12);}
+[class*="st-key-odds_"] {flex-wrap: nowrap !important;}
+[class*="st-key-odds_"] > div {width: auto !important; flex: 0 0 auto;}
+/* the ⋮ in the card's top-right corner, and its small menu that opens inside the card */
+[class*="st-key-ev_"], [class*="st-key-wait_"] {position: relative;}
+[class*="st-key-menu_"] {position: absolute !important; top: 8px; right: 8px; z-index: 5;
+  width: auto !important;}
+[class*="st-key-menu_"] button {min-height: 28px; height: 28px; width: 28px; padding: 0 !important;
+  border: none !important; background: transparent !important; box-shadow: none !important;}
+[class*="st-key-menu_"] button:hover {background: var(--ci-soft) !important;}
+[class*="st-key-menu_"] button [data-testid="stIconMaterial"] {color: var(--ci-muted);}
+[class*="st-key-menupanel_"] {position: absolute !important; top: 38px; right: 8px; z-index: 6;
+  width: 150px !important; gap: 4px; padding: 6px; background: #FFFFFF;
+  border: 1px solid var(--ci-line); border-radius: 12px; box-shadow: 0 10px 24px rgba(154, 52, 18, .16);}
+[class*="st-key-menupanel_"] button {min-height: 32px; padding: 2px 10px !important;
+  justify-content: flex-start !important; border: none !important; border-radius: 8px !important;
+  background: transparent !important;}
+[class*="st-key-menupanel_"] button:hover {background: var(--ci-soft) !important;}
+[class*="st-key-menupanel_"] button p {font-size: 0.82rem;}
+/* "N members flagged this" line with its Flag button */
+[class*="st-key-flagline_"] {flex-wrap: wrap; background: #FEF2F2; border: 1px solid #FECACA;
+  border-radius: 12px; padding: 6px 10px; margin: 2px 0;}
+[class*="st-key-flagline_"] > div {width: auto !important; flex: 0 1 auto;}
+[class*="st-key-flagline_"] > div:first-child {margin-right: auto;}
+.ci-flagnote {font-size: 0.8rem; font-weight: 600; color: #B91C1C;}
+[class*="st-key-flagtoo_"] button {min-height: 30px; padding: 0 12px !important;
+  border-color: #FCA5A5 !important; color: #B91C1C !important;}
+/* poll votes: thinner, striped, green (keep) and red (delete), unlike the bet bar */
+.ci-votes {margin: 4px 0 10px;}
+.ci-votes-labels {display: flex; justify-content: space-between; font-size: 0.68rem;
+  font-weight: 800; letter-spacing: 0.06em; color: var(--ci-muted); margin-bottom: 4px;}
+.ci-vote-keep {color: #15803D;} .ci-vote-delete {color: #B91C1C;}
+.ci-votebar {display: flex; gap: 3px; height: 6px; border-radius: 999px; background: #EEE;
+  overflow: hidden;}
+.ci-votebar-keep, .ci-votebar-delete {background-image: repeating-linear-gradient(135deg,
+  rgba(255, 255, 255, .35) 0 4px, transparent 4px 8px);}
+.ci-votebar-keep {background-color: #16A34A;} .ci-votebar-delete {background-color: #DC2626;}
+/* leave room for the ⋮ above the odds boxes */
+[class*="st-key-odds_"] {margin-top: 30px;}
 /* main buttons (New event, Bet, Save ...) in the orange gradient */
 [data-testid="stBaseButton-primary"] {background: var(--ci-grad) !important; border: none !important;
   box-shadow: 0 6px 16px rgba(234, 88, 12, .28); transition: transform .15s, box-shadow .15s;}
