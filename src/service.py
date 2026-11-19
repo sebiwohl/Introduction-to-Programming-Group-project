@@ -35,12 +35,15 @@ from src.convert import (
 )
 from src.models import (
     AVATARS,
+    TYPE_NAMES,
+    TYPE_YES_NO,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
     STATUS_DELETED,
     STATUS_OPEN,
     STATUS_PAUSED,
+    STATUS_RESOLVED,
     Bet,
     Event,
     Group,
@@ -64,11 +67,31 @@ class Bettor:
 
 
 @dataclass
+class OptionRow:
+    """One option of a names event with its live numbers.
+
+    odds is pool / stake on this option (None while nobody backed it); share is
+    the part of the pool on it, 0 to 1 (None while the pool is empty).
+    """
+
+    id: str
+    name: str
+    stake: Decimal
+    odds: Optional[float]
+    share: Optional[float]
+    my_stake: Decimal
+    won: bool = False
+
+
+@dataclass
 class EventSummary:
     """An event with the numbers the feed shows.
 
     creator_name and bettors are read-only extras for the feed: who created the
-    event and who backed which side (largest stake first).
+    event and who backed which side (largest stake first). A names event has
+    one OptionRow per option instead of the yes/no numbers (those stay 0 and
+    None), and once resolved, paid_odds is what each coin on a winning option
+    paid (None if every stake was refunded).
     """
 
     event: Event
@@ -80,16 +103,26 @@ class EventSummary:
     my_stake: Decimal
     creator_name: str = ""
     bettors: List[Bettor] = field(default_factory=list)
+    options: List[OptionRow] = field(default_factory=list)
+    paid_odds: Optional[float] = None
 
 
 @dataclass
 class BetRecord:
-    """One past or open bet of a user, with its event's title and result."""
+    """One past or open bet of a user, with its event's title and result.
+
+    event_type is the event's type; side_label is how the bet's side is shown
+    (YES, NO or an option's name); winner_label names the result once resolved
+    ('YES', or 'Marta and João').
+    """
 
     bet: Bet
     event_title: str
     event_status: str
     outcome: Optional[str]
+    side_label: str = ""
+    winner_label: str = ""
+    event_type: str = TYPE_YES_NO
 
 
 @dataclass
@@ -236,9 +269,40 @@ def _bettors(state: _State, bets: List[Bet]) -> List[Bettor]:
     return bettors
 
 
+def _option_rows(event: Event, bets: List[Bet], user: User, total: Decimal) -> List[OptionRow]:
+    """Return a names event's options with stake, odds, pool share and the user's stake."""
+    stakes = betting.stake_per_option(bets, event)
+    mine = {option_id: Decimal("0") for option_id in stakes}
+    for bet in bets:
+        if bet.user_id == user.id:
+            mine[bet.side] += bet.stake
+    return [
+        OptionRow(id=option.id, name=option.name, stake=stakes[option.id],
+                  odds=betting.odds_for(total, stakes[option.id]),
+                  share=betting.share_for(total, stakes[option.id]),
+                  my_stake=mine[option.id], won=option.id in event.winners)
+        for option in event.options
+    ]
+
+
+def _summarize_names(state: _State, event: Event, user: User, bets: List[Bet]) -> EventSummary:
+    """Return the feed numbers for a names event: one row per option."""
+    total = betting.pool(bets)
+    rows = _option_rows(event, bets, user, total)
+    paid = betting.paid_odds(bets, event.winners) if event.status == STATUS_RESOLVED else None
+    return EventSummary(
+        event=event, pool=total, stake_yes=Decimal("0"), stake_no=Decimal("0"),
+        odds_yes=None, odds_no=None, my_stake=sum((row.my_stake for row in rows), Decimal("0")),
+        creator_name=_username(state, event.creator_id), bettors=_bettors(state, bets),
+        options=rows, paid_odds=paid,
+    )
+
+
 def _summarize(state: _State, event: Event, user: User) -> EventSummary:
     """Return the feed numbers for one event."""
     bets = _bets_on(state, event.id)
+    if betting.is_names_event(event):
+        return _summarize_names(state, event, user, bets)
     stakes = betting.stake_per_side(bets)
     my_stake = sum((b.stake for b in bets if b.user_id == user.id), Decimal("0"))
     return EventSummary(
@@ -272,17 +336,37 @@ def _feed(state: _State, user: User) -> List[EventSummary]:
 
 def _bet_history(state: _State, user: User) -> List[BetRecord]:
     """Return the user's bets with their events' titles and results, newest event first."""
-    records = []
+    records, winners = [], {}
     for bet in state.bets:
         if bet.user_id != user.id:
             continue
         event = state.events[bet.event_id]
+        if event.id not in winners:
+            winners[event.id] = winner_label(event)
         records.append(BetRecord(
             bet=bet, event_title=event.title,
             event_status=event.status, outcome=event.outcome,
+            side_label=betting.side_label(event, bet.side),
+            winner_label=winners[event.id], event_type=event.event_type,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
+
+
+def join_names(names: List[str]) -> str:
+    """Return names as one phrase: 'Marta', 'Marta and João', 'Ana, Marta and João'."""
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def winner_label(event: Event) -> str:
+    """Return the result of a resolved event as text, like 'YES' or 'Marta and João'."""
+    if event.status != STATUS_RESOLVED:
+        return ""
+    if not betting.is_names_event(event):
+        return (event.outcome or "").upper()
+    return join_names([betting.side_label(event, option_id) for option_id in event.winners])
 
 
 def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
@@ -387,11 +471,16 @@ def create_event(
     now: datetime,
     description: str = "",
     path=None,
+    options: Optional[List[str]] = None,
+    multi_winner: bool = False,
 ) -> Event:
-    """Create a yes/no event in the user's group and return it.
+    """Create an event in the user's group and return it.
 
-    The title is required, both texts are trimmed and length-limited, and the
-    close time must be in the future.
+    Without options it is a yes/no event. With options it is a names event:
+    2 to 10 names (trimmed, not empty, at most 40 characters, no duplicates
+    ignoring case), and multi_winner says whether several can win. The names
+    cannot change afterwards. The title is required, both texts are trimmed
+    and length-limited, and the close time must be in the future.
     """
     _require_aware(now, "now")
     _require_aware(close_time, "Close time")
@@ -401,6 +490,14 @@ def create_event(
     )
     if close_time <= now:
         raise BettingError("Close time must be in the future.")
+    if not isinstance(multi_winner, bool):
+        raise BettingError("Choose one winner or several winners.")
+    if multi_winner and options is None:
+        raise BettingError("Several winners are only possible on a names event.")
+    names = {}
+    if options is not None:
+        names = {"event_type": TYPE_NAMES, "options": betting.make_options(options),
+                 "multi_winner": multi_winner}
     with storage.transaction(path) as data:
         state = _unpack(data)
         user = _get_user(state, user_id)
@@ -408,7 +505,7 @@ def create_event(
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
             title=title, description=description, close_time=close_time,
-            event_time=close_time,
+            event_time=close_time, **names,
         )
         state.events[event.id] = event
         _pack(state, data)
@@ -474,6 +571,38 @@ def resolve_event(
         )
         _pack(state, data)
     return total
+
+
+def resolve_names_event(
+    user_id: str, event_id: str, winners: List[str], now: datetime, path=None
+) -> Decimal:
+    """Set the winning option(s) of a names event, pay out and save; return total paid.
+
+    Same permissions and timing as resolve_event. winners are option ids:
+    exactly one for a one-winner event, one or more when several can win.
+    """
+    _require_aware(now, "now")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        _close_expired(state, now)
+        user = _get_user(state, user_id)
+        event = _get_event_for(state, user, event_id)
+        auth.require_permission(user, auth.RESOLVE_EVENT, event)
+        total = betting.resolve_names_event(
+            event, _bets_on(state, event.id), winners, state.users, now
+        )
+        _pack(state, data)
+    return total
+
+
+def group_member_names(user_id: str, path=None) -> List[str]:
+    """Return the usernames in the user's group, sorted by name (for quick names options)."""
+    state = _load(path)
+    user = _get_user(state, user_id)
+    if not user.group_id:
+        return []
+    names = [u.username for u in state.users.values() if u.group_id == user.group_id]
+    return sorted(names, key=str.casefold)
 
 
 def bet_history(user_id: str, path=None) -> List[BetRecord]:

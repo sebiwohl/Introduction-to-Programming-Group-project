@@ -6,6 +6,7 @@ below. All text that comes from users is escaped before it is put into HTML.
 
 import base64
 import html
+import re
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
@@ -156,6 +157,33 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-side {background: var(--ci-soft); border-radius: 12px; padding: 12px 14px;}
 .ci-side-row {display: flex; justify-content: space-between; align-items: center;
   padding: 4px 0; font-size: 0.88rem;}
+
+/* names events: one row per option instead of the YES / NO boxes and bar */
+.ci-opts {display: flex; flex-direction: column; gap: 4px;}
+.ci-opt {display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(60px, 2fr) 40px 112px;
+  grid-template-areas: "name bar share odds"; align-items: center; gap: 12px;
+  background: var(--ci-soft); border: 1px solid var(--ci-line); border-radius: 10px; padding: 7px 12px;}
+.ci-opt-name {grid-area: name; min-width: 0; font-size: 0.92rem; font-weight: 700; color: var(--ci-ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.ci-opt-sub {display: block; font-size: 0.7rem; font-weight: 500; color: var(--ci-muted);
+  overflow: hidden; text-overflow: ellipsis;}
+.ci-opt-bar {grid-area: bar; height: 6px; border-radius: 999px; background: var(--ci-line); overflow: hidden;}
+.ci-opt-bar div {height: 100%; border-radius: 999px; background: var(--ci-yes);}
+.ci-opt-share {grid-area: share; font-size: 0.78rem; font-weight: 700; text-align: right;}
+.ci-opt-odds {grid-area: odds; font-size: 1.05rem; font-weight: 800; text-align: right; white-space: nowrap;
+  color: var(--ci-yes);}
+.ci-opt-odds small {font-size: 0.6rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ci-muted);}
+.ci-opts-final .ci-opt {background: #FFFFFF;}
+.ci-opts-final .ci-opt-odds {color: var(--ci-text);}
+.ci-opts-final .ci-opt-bar div, .ci-opts-grey .ci-opt-bar div {background: #8E8E95;}
+.ci-opts .ci-opt-win {outline: 2px solid var(--ci-ink); border-color: transparent;}
+.ci-opts .ci-opt-win .ci-opt-bar div {background: var(--ci-yes);}
+.ci-opt-sub .ci-pill {margin-right: 4px;}
+.ci-ev-tags .ci-pill-won {max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;}
+.ci-help {display: inline-block; width: 14px; height: 14px; line-height: 14px; border-radius: 50%;
+  background: var(--ci-line); color: var(--ci-text); font-size: 0.6rem; font-weight: 800;
+  text-align: center; margin-left: 4px; cursor: help;}
 
 /* cards */
 .ci-card, [class*="st-key-card_"] {border: 1px solid var(--ci-line); border-radius: 16px;
@@ -354,6 +382,8 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   .ci-tiles, .ci-podium {grid-template-columns: 1fr 1fr;}
   .ci-sides {grid-template-columns: 1fr;}
   .ci-ev {flex-direction: column;}
+  .ci-opt {grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "name odds" "bar share";
+    row-gap: 6px;}
   .st-key-topbar {position: static;}
 }
 
@@ -510,6 +540,25 @@ def esc(text: str) -> str:
     return html.escape(text or "")
 
 
+MARKDOWN_SPECIAL = re.compile(r"([\\`*_{}\[\]()#+\-.!|~<>$:])")
+
+
+AUTOLINK_START = re.compile(r"(?i)(\\:|@|www)")
+ZERO_WIDTH_SPACE = "\u200b"
+
+
+def plain(text: str) -> str:
+    """Make user text show literally in Markdown: widget labels and st.error / st.success.
+
+    Streamlit renders those as Markdown, so a name like '[x](link)' would
+    otherwise become a link (HTML is never rendered there). Bare web and email
+    addresses would still turn into links, so an invisible zero-width space is
+    put after ':' and '@' and after 'www'.
+    """
+    escaped = MARKDOWN_SPECIAL.sub(r"\\\1", text or "")
+    return AUTOLINK_START.sub(lambda match: match.group(1) + ZERO_WIDTH_SPACE, escaped)
+
+
 def logo(height: int = 26) -> str:
     """Return the "CALLED IT!" logo: a speech bubble with a tick, then the wordmark.
 
@@ -640,6 +689,30 @@ def stake_bar(stake_yes: Decimal, stake_no: Decimal, middle: str = "", grey: boo
         parts.append(f'<div class="ci-bar-no" style="flex:{stake_no}"></div>')
     grey_class = " ci-bar-grey" if grey else ""
     return f'{labels}<div class="ci-bar{grey_class}">{"".join(parts)}</div>'
+
+
+def option_row(name: str, odds: Optional[float], share: Optional[float], stake: Decimal,
+               members: int, my_stake: Decimal, up_to: bool = False, won: bool = False) -> str:
+    """Return one option of a names event: name, who is in, its pool share as a bar, and its odds.
+
+    odds is None while nobody backed it and share is None while the pool is
+    empty; both then show a dash. With up_to (several can win) the odds read
+    'up to'. A winning option is outlined and tagged 'Won'.
+    """
+    percent = None if share is None else round(share * 100)
+    sub = [f"{members} member{'s' if members != 1 else ''} · {money(stake)} coins"
+           if members else "no bets yet"]
+    if my_stake:
+        sub.append(f"you {money(my_stake)}")
+    tag = pill("Won", "won") if won else ""
+    prefix = "<small>up to</small> " if up_to and odds else ""
+    return (
+        f'<div class="ci-opt{" ci-opt-win" if won else ""}">'
+        f'<div class="ci-opt-name">{esc(name)}<span class="ci-opt-sub">{tag}{" · ".join(sub)}</span></div>'
+        f'<div class="ci-opt-bar"><div style="width:{percent or 0}%"></div></div>'
+        f'<div class="ci-opt-share">{"—" if percent is None else f"{percent}%"}</div>'
+        f'<div class="ci-opt-odds">{prefix}{odds_text(odds)}</div></div>'
+    )
 
 
 # Bright colors for tab icons (also used for the tinted hover and selected tab).

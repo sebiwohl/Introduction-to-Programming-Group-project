@@ -1,5 +1,9 @@
 """Core betting logic: pool, odds, placing bets and resolving events.
 
+Two kinds of event share the same pari-mutuel pool and rounding rule: yes/no
+events, and names events whose options are names (people, for example). The
+names functions sit in their own section below.
+
 Pure functions only: no Streamlit, no file access. Money is a Decimal with at
 most 2 decimal places (cents). Floats are never used for money.
 """
@@ -11,12 +15,17 @@ from typing import Dict, List, Optional, Union
 
 from src.models import (
     CENT,
+    TYPE_NAMES,
+    MAX_OPTION_LENGTH,
+    MAX_OPTIONS,
+    MIN_OPTIONS,
     SIDES,
     STATUS_CLOSED,
     STATUS_OPEN,
     STATUS_RESOLVED,
     Bet,
     Event,
+    Option,
     User,
 )
 
@@ -128,8 +137,8 @@ def place_bet(user: User, event: Event, side: str, stake: Amount, now: datetime)
 
     Raises BettingError (and changes nothing) if the event is not in one of the
     user's groups, the event is not open or is past its close time, the side is
-    invalid, or the stake is not a positive amount with at most 2 decimals
-    within the user's balance.
+    invalid (yes or no, or one of the options of a names event), or the stake
+    is not a positive amount with at most 2 decimals within the user's balance.
     """
     if not can_access_event(user, event):
         raise BettingError("You can only bet on events in your own group.")
@@ -137,7 +146,7 @@ def place_bet(user: User, event: Event, side: str, stake: Amount, now: datetime)
         raise BettingError(f"Event is {event.status}, not open for bets.")
     if now >= event.close_time:
         raise BettingError("Event is past its close time.")
-    _check_side(side)
+    _check_bet_side(event, side)
     stake = _validate_stake(stake)
     if stake > user.balance:
         raise BettingError("Stake exceeds balance.")
@@ -151,16 +160,73 @@ def place_bet(user: User, event: Event, side: str, stake: Amount, now: datetime)
     )
 
 
+def _check_bet_side(event: Event, side: str) -> None:
+    """Raise BettingError unless `side` fits the event: yes or no, or one of its options."""
+    if is_names_event(event):
+        if side not in option_ids(event):
+            raise BettingError("Pick one of the event's options.")
+    else:
+        _check_side(side)
+
+
+def _check_resolvable(event: Event, now: datetime) -> None:
+    """Raise BettingError unless the event may get its result now."""
+    if event.status == STATUS_RESOLVED:
+        raise BettingError("Event is already resolved and read-only.")
+    if event.status not in (STATUS_OPEN, STATUS_CLOSED):
+        raise BettingError(f"Cannot resolve an event that is {event.status}.")
+    if now < event.close_time:
+        raise BettingError("Event cannot be resolved before its close time.")
+
+
+def _check_bets_belong(event: Event, bets: List[Bet], users: Dict[str, User]) -> None:
+    """Raise BettingError if a bet is on another event or by an unknown user."""
+    for bet in bets:
+        if bet.event_id != event.id:
+            raise BettingError(f"Bet {bet.id} belongs to another event.")
+        if bet.user_id not in users:
+            raise BettingError(f"Unknown user {bet.user_id} on bet {bet.id}.")
+
+
+def _refund_all(bets: List[Bet]) -> List[Decimal]:
+    """Return every bet's stake as its payout (a full refund)."""
+    return [Decimal(bet.stake).quantize(CENT) for bet in bets]
+
+
+def _winners_split(bets: List[Bet], winning_sides: set) -> List[Decimal]:
+    """Return one payout per bet: the bets on winning_sides split the whole pool, the rest get 0.
+
+    There must be at least one bet on a winning side (split_pool's rule).
+    """
+    winners = [bet for bet in bets if bet.side in winning_sides]
+    shares = iter(split_pool(pool(bets), [bet.stake for bet in winners]))
+    zero = Decimal("0").quantize(CENT)
+    return [next(shares) if bet.side in winning_sides else zero for bet in bets]
+
+
+def _settle(bets: List[Bet], payouts: List[Decimal], users: Dict[str, User]) -> Decimal:
+    """Check that the payouts add up to the pool, then pay them out; return the total.
+
+    Sets Bet.payout and credits each user's balance. Nothing changes if the
+    total is wrong (a safety net; it should never happen).
+    """
+    total_paid = sum(payouts, Decimal("0"))
+    if total_paid != pool(bets):
+        raise BettingError("Payouts do not add up to the pool; nothing was paid.")
+    for bet, payout in zip(bets, payouts):
+        bet.payout = payout
+        user = users[bet.user_id]
+        user.balance = Decimal(user.balance) + payout
+    return total_paid
+
+
 def _compute_payouts(bets: List[Bet], outcome: str) -> List[Decimal]:
     """Return one payout per bet: refunds, or winners splitting the pool."""
     totals = stake_per_side(bets)
     only_one_side = any(stake == 0 for stake in totals.values())
     if only_one_side:  # also covers "nobody backed the winner" and no bets
-        return [Decimal(bet.stake).quantize(CENT) for bet in bets]
-    winners = [bet for bet in bets if bet.side == outcome]
-    winner_payouts = iter(split_pool(pool(bets), [bet.stake for bet in winners]))
-    zero = Decimal("0").quantize(CENT)
-    return [next(winner_payouts) if bet.side == outcome else zero for bet in bets]
+        return _refund_all(bets)
+    return _winners_split(bets, {outcome})
 
 
 def resolve_event(
@@ -177,29 +243,165 @@ def resolve_event(
     winner, or nobody lost), every stake is refunded. Sets Bet.payout and
     credits the users' balances. Returns the total paid out, which always
     equals the pool. A resolved event is read-only, so resolving it again
-    raises BettingError. Nothing changes on error.
+    raises BettingError. Names events are resolved with resolve_names_event.
+    Nothing changes on error.
     """
-    if event.status == STATUS_RESOLVED:
-        raise BettingError("Event is already resolved and read-only.")
-    if event.status not in (STATUS_OPEN, STATUS_CLOSED):
-        raise BettingError(f"Cannot resolve an event that is {event.status}.")
-    if now < event.close_time:
-        raise BettingError("Event cannot be resolved before its close time.")
+    if is_names_event(event):
+        raise BettingError("Pick the winning option of this names event.")
+    _check_resolvable(event, now)
     _check_side(outcome)
-    for bet in bets:
-        if bet.event_id != event.id:
-            raise BettingError(f"Bet {bet.id} belongs to another event.")
-        if bet.user_id not in users:
-            raise BettingError(f"Unknown user {bet.user_id} on bet {bet.id}.")
-
-    payouts = _compute_payouts(bets, outcome)
-    total_paid = sum(payouts, Decimal("0"))
-    if total_paid != pool(bets):  # safety net; should never happen
-        raise BettingError("Payouts do not add up to the pool; nothing was paid.")
-    for bet, payout in zip(bets, payouts):
-        bet.payout = payout
-        user = users[bet.user_id]
-        user.balance = Decimal(user.balance) + payout
+    _check_bets_belong(event, bets, users)
+    total_paid = _settle(bets, _compute_payouts(bets, outcome), users)
     event.outcome = outcome
+    event.status = STATUS_RESOLVED
+    return total_paid
+
+
+# --- names events -----------------------------------------------------------
+
+def is_names_event(event: Event) -> bool:
+    """Return True for an event whose options are names instead of yes and no."""
+    return event.event_type == TYPE_NAMES
+
+
+def clean_options(names: List[str]) -> List[str]:
+    """Return the option names trimmed, or raise BettingError if they break a rule.
+
+    A names event needs MIN_OPTIONS to MAX_OPTIONS options. Each name is
+    trimmed, cannot be empty, has at most MAX_OPTION_LENGTH characters, and no
+    two names may match ignoring case.
+    """
+    if not isinstance(names, (list, tuple)) or not all(isinstance(n, str) for n in names):
+        raise BettingError("Options must be a list of names.")
+    cleaned = [name.strip() for name in names]
+    if not MIN_OPTIONS <= len(cleaned) <= MAX_OPTIONS:
+        raise BettingError(
+            f"A names event needs {MIN_OPTIONS} to {MAX_OPTIONS} names, got {len(cleaned)}."
+        )
+    if not all(cleaned):
+        raise BettingError("Names cannot be empty.")
+    too_long = next((name for name in cleaned if len(name) > MAX_OPTION_LENGTH), None)
+    if too_long is not None:
+        raise BettingError(f"“{too_long[:20]}…” is too long: names can be at most "
+                           f"{MAX_OPTION_LENGTH} characters.")
+    seen = set()
+    for name in cleaned:
+        if name.casefold() in seen:
+            raise BettingError(f"“{name}” is listed twice.")
+        seen.add(name.casefold())
+    return cleaned
+
+
+def make_options(names: List[str]) -> List[Option]:
+    """Return checked options with simple ids in order: 'o1', 'o2', ..."""
+    return [Option(id=f"o{number}", name=name)
+            for number, name in enumerate(clean_options(names), start=1)]
+
+
+def option_ids(event: Event) -> List[str]:
+    """Return the ids of a names event's options, in the order they were listed."""
+    return [option.id for option in event.options]
+
+
+def side_label(event: Event, side: str) -> str:
+    """Return how a side is shown: the option's name, or YES / NO."""
+    if is_names_event(event):
+        return next((o.name for o in event.options if o.id == side), "Unknown option")
+    return side.upper()
+
+
+def stake_per_option(bets: List[Bet], event: Event) -> Dict[str, Decimal]:
+    """Return the total stake on each option of a names event, e.g. {'o1': 30, 'o2': 0}."""
+    totals = {option_id: Decimal("0") for option_id in option_ids(event)}
+    for bet in bets:
+        if bet.side not in totals:
+            raise BettingError(f"Bet {bet.id} is on an option this event does not have.")
+        totals[bet.side] += Decimal(bet.stake)
+    return totals
+
+
+def odds_for(total_pool: Decimal, side_stake: Decimal) -> Optional[float]:
+    """Return pool / stake on one side or option for display, or None if nobody backed it."""
+    return float(total_pool / side_stake) if side_stake else None
+
+
+def share_for(total_pool: Decimal, side_stake: Decimal) -> Optional[float]:
+    """Return the share of the pool on one side or option (0 to 1), or None with an empty pool."""
+    return float(side_stake / total_pool) if total_pool else None
+
+
+def _option_stake(bets: List[Bet], event: Event, option_id: str) -> Decimal:
+    """Return the total stake on one option, or raise BettingError for an unknown option."""
+    stakes = stake_per_option(bets, event)
+    if option_id not in stakes:
+        raise BettingError("Unknown option.")
+    return stakes[option_id]
+
+
+def option_odds(bets: List[Bet], event: Event, option_id: str) -> Optional[float]:
+    """Return pool / stake on one option for display, or None if nobody backed it."""
+    return odds_for(pool(bets), _option_stake(bets, event, option_id))
+
+
+def pool_share(bets: List[Bet], event: Event, option_id: str) -> Optional[float]:
+    """Return the share of the pool on one option (0 to 1), or None while there are no bets."""
+    return share_for(pool(bets), _option_stake(bets, event, option_id))
+
+
+def paid_odds(bets: List[Bet], winners: List[str]) -> Optional[float]:
+    """Return what each coin on a winning option paid (pool / winning stake), or None if refunded."""
+    winning = sum((Decimal(bet.stake) for bet in bets if bet.side in winners), Decimal("0"))
+    return float(pool(bets) / winning) if winning else None
+
+
+def _check_winners(event: Event, winners: List[str]) -> List[str]:
+    """Return the winning option ids in the event's order, or raise BettingError."""
+    if isinstance(winners, str) or not isinstance(winners, (list, tuple, set, frozenset)):
+        raise BettingError("Winners must be a list of options.")
+    chosen = set(winners)
+    if not chosen:
+        raise BettingError("Pick at least one winning option.")
+    if not chosen <= set(option_ids(event)):
+        raise BettingError("Pick the winners from the event's options.")
+    if len(chosen) > 1 and not event.multi_winner:
+        raise BettingError("This event has one winner: pick exactly one option.")
+    return [option_id for option_id in option_ids(event) if option_id in chosen]
+
+
+def names_payouts(bets: List[Bet], winners: List[str]) -> List[Decimal]:
+    """Return one payout per bet on a names event.
+
+    The whole pool goes to the bets on the winning option(s), in proportion to
+    their stakes: payout = stake x pool / stake on the winning options, with
+    the same rounding rule as yes/no (split_pool). If nobody bet on a winning
+    option, every stake is refunded.
+    """
+    if not any(bet.side in winners for bet in bets):
+        return _refund_all(bets)
+    return _winners_split(bets, set(winners))
+
+
+def resolve_names_event(
+    event: Event,
+    bets: List[Bet],
+    winners: List[str],
+    users: Dict[str, User],
+    now: datetime,
+) -> Decimal:
+    """Set the winning option(s) of a names event, pay out and mark it resolved.
+
+    Same timing rules as resolve_event. A one-winner event needs exactly one
+    winner; a multi_winner event takes one or more. Sets Bet.payout, credits
+    the balances and returns the total paid out, which always equals the pool.
+    Nothing changes on error.
+    """
+    if not is_names_event(event):
+        raise BettingError("This is a yes/no event: set the result to yes or no.")
+    _check_resolvable(event, now)
+    chosen = _check_winners(event, winners)
+    _check_bets_belong(event, bets, users)
+    stake_per_option(bets, event)  # every bet must be on one of the options
+    total_paid = _settle(bets, names_payouts(bets, chosen), users)
+    event.winners = chosen
     event.status = STATUS_RESOLVED
     return total_paid

@@ -1,21 +1,42 @@
-"""The Feed page: event items with odds and betting, the side cards and the New event dialog."""
+"""The Feed page: event items with odds and betting, the side cards and the New event dialog.
 
-from datetime import date, datetime, time, timedelta
+Yes/no events show two odds boxes and a two-colour bar. Names events (the
+options are names, such as people in the group) show one row per option
+instead, built from the same pieces and colours.
+"""
+
+from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional
 
 import streamlit as st
 
-from src import auth, service, stats
+from src import auth, betting, service, stats
 from src.betting import BettingError
 from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, STATUS_RESOLVED, User
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import nav, style
-from src.ui.actions import attempt
+from src.ui.actions import FLASH_KEY, attempt
 
 SIDES = (SIDE_YES, SIDE_NO)
 FILTER_KEY = "tabs_feed"
+KIND_CHOICES = ("Yes / No", "Names")
+WINNER_CHOICES = ("One winner", "Several can win")
+SEVERAL_HELP = ("Several names can win. Everyone who backed a winning name shares the whole pool, "
+                "so a name's odds are the most it can pay: the more names win, the less each pays.")
+
+
+def _now() -> datetime:
+    """Return the current time.
+
+    The names bet form and the result picker are fragments: clicking in them
+    reruns only that part of the page, so the `now` of the last full page load
+    may be minutes old. Actions there read the clock when they happen, so a
+    bet placed after betting closed is still refused. The New event dialog is
+    a fragment too, so it checks the close time against this as well.
+    """
+    return datetime.now(timezone.utc)
 
 
 def bets_by_event(records: List[BetRecord]) -> Dict[str, List[BetRecord]]:
@@ -45,7 +66,7 @@ def _my_calls(user: User, summary: EventSummary) -> str:
     calls = [b for b in summary.bettors if b.username == user.username]
     if not calls:
         return ""
-    parts = [f"{b.side.upper()} with {style.money(b.stake)}" for b in calls]
+    parts = [f"{betting.side_label(summary.event, b.side)} with {style.money(b.stake)}" for b in calls]
     return "you backed " + " and ".join(parts)
 
 
@@ -68,13 +89,27 @@ def _tags(summary: EventSummary, biggest: bool) -> str:
         meta = f"Closes {style.when(event.close_time)}"
     elif event.status == STATUS_CLOSED:
         pills, meta = style.pill("Awaiting result", "waiting"), f"Betting closed {style.when(event.close_time)}"
+    elif event.status == STATUS_RESOLVED and betting.is_names_event(event):
+        # the same pill as a yes/no result ("yes won")
+        pills = style.pill("Resolved", "resolved") + style.pill(f"{service.winner_label(event)} won", SIDE_YES)
+        meta = f"Closed {style.when(event.close_time)}"
     elif event.status == STATUS_RESOLVED:
         side = event.outcome or SIDE_YES
         pills = style.pill("Resolved", "resolved") + style.pill(f"{side} won", side)
         meta = f"Closed {style.when(event.close_time)}"
     else:
         pills, meta = style.pill(event.status, "paused"), "Betting paused"
-    return f'<div class="ci-ev-tags">{pills}<span>{style.esc(meta)}</span></div>'
+    return f'<div class="ci-ev-tags">{pills}{_mode_pill(event)}<span>{style.esc(meta)}</span></div>'
+
+
+def _mode_pill(event) -> str:
+    """Return the 'One winner' / 'Several can win' pill of a names event (nothing for yes/no)."""
+    if not betting.is_names_event(event):
+        return ""
+    if not event.multi_winner:
+        return style.pill(WINNER_CHOICES[0], "refunded")
+    return (f'<span class="ci-pill ci-pill-refunded" title="{style.esc(SEVERAL_HELP)}">'
+            f'{WINNER_CHOICES[1]}<span class="ci-help">?</span></span>')
 
 
 def _sub_line(user: User, summary: EventSummary, records: List[BetRecord]) -> str:
@@ -95,9 +130,42 @@ def _sub_line(user: User, summary: EventSummary, records: List[BetRecord]) -> st
     return " · ".join(p for p in parts if p)
 
 
+def _ranked_options(summary: EventSummary) -> list:
+    """Return a names event's options with the biggest pool share first (listed order on ties)."""
+    return sorted(summary.options, key=lambda option: -(option.share or 0))
+
+
+def _names_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool) -> str:
+    """Return the top of a names event: pills, title, grey line and one row per option."""
+    event = summary.event
+    description = (f'<div class="ci-ev-desc">{style.esc(event.description)}</div>'
+                   if event.description else "")
+    up_to = event.multi_winner and event.status != STATUS_RESOLVED
+    rows = "".join(
+        style.option_row(option.name, stats.side_odds(summary, option.id), option.share, option.stake,
+                         len({b.username for b in summary.bettors if b.side == option.id}),
+                         option.my_stake, up_to, option.won)
+        for option in _ranked_options(summary)
+    )  # side_odds: a winning name shows what was actually paid
+    look = {STATUS_OPEN: "", STATUS_PAUSED: " ci-opts-grey"}.get(event.status, " ci-opts-final")
+    note = {STATUS_CLOSED: "Final odds · betting locked",
+            STATUS_PAUSED: "Betting paused"}.get(event.status, "")
+    if not note and summary.pool == 0:
+        note = "No bets yet"
+    note_line = f'<div class="ci-split"><span class="ci-split-mid">{note}</span></div>' if note else ""
+    return (
+        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest)}'
+        f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
+        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div></div>'
+        f'{note_line}<div class="ci-opts{look}">{rows}</div>'
+    )
+
+
 def _event_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool) -> str:
     """Return the top of an event item: pills, title, grey line, odds boxes and the bar."""
     event = summary.event
+    if betting.is_names_event(event):
+        return _names_head(user, summary, records, biggest)
     settled = event.status != STATUS_OPEN
     winner = event.outcome if event.status == STATUS_RESOLVED else None
     description = (f'<div class="ci-ev-desc">{style.esc(event.description)}</div>'
@@ -126,15 +194,31 @@ def _side_panel(user: User, summary: EventSummary, side: str) -> str:
     return f'<div class="ci-side"><div class="ci-label ci-{side}">{label}</div>{rows}</div>'
 
 
+def _option_panel(user: User, summary: EventSummary, option) -> str:
+    """Return the list of members who backed one option of a names event."""
+    bettors = [b for b in summary.bettors if b.side == option.id]
+    rows = "".join(
+        f'<div class="ci-side-row">{style.who(b.username, b.username == user.username)}'
+        f"<b>{style.money(b.stake)}</b></div>"
+        for b in bettors
+    ) or '<div class="ci-muted">Nobody yet.</div>'
+    label = f"{style.esc(option.name)} · {len(bettors)} member{'s' if len(bettors) != 1 else ''}"
+    return f'<div class="ci-side"><div class="ci-label">{label}</div>{rows}</div>'
+
+
 def _bets_panel(user: User, summary: EventSummary) -> None:
     """Draw the fold-out list of who bet on each side (it opens without reloading)."""
     count = _members_in(summary)
     if not count:
         return
+    if betting.is_names_event(summary.event):
+        panels = "".join(_option_panel(user, summary, option)
+                         for option in _ranked_options(summary) if option.stake)
+    else:
+        panels = "".join(_side_panel(user, summary, side) for side in SIDES)
     with st.container(key=f"bets_{summary.event.id}"):
         with st.expander(f"See who bet ({count})"):
-            style.show('<div class="ci-sides">'
-                       + "".join(_side_panel(user, summary, side) for side in SIDES) + "</div>")
+            style.show(f'<div class="ci-sides">{panels}</div>')
 
 
 def _bet_form(user: User, summary: EventSummary, now: datetime) -> None:
@@ -165,6 +249,90 @@ def _bet_form(user: User, summary: EventSummary, now: datetime) -> None:
         st.rerun()
 
 
+def _preview(summary: EventSummary, pick: Optional[str], amount: Decimal) -> str:
+    """Return the line under the names bet form, like 'If Marta wins you get ~42 coins'."""
+    if pick is None:
+        return "Pick a name to see what you could win."
+    payout = stats.payout_preview(amount, summary, pick)
+    if payout is None:
+        return "Enter a stake above 0."
+    name = betting.side_label(summary.event, pick)
+    up_to = "up to " if summary.event.multi_winner else ""
+    return f"If {name} wins you get {up_to}~{style.money(payout)} coins"
+
+
+@st.fragment
+def _names_bet_form(user: User, summary: EventSummary) -> None:
+    """Draw the name picker, the stake and the button for a names event, with a live preview.
+
+    It is a fragment: picking a name or changing the stake reruns only this
+    part (the data is not reloaded), so the preview updates as you type.
+    """
+    event = summary.event
+    labels = {option.id: option.name for option in summary.options}
+    pick = st.radio("Your pick", list(labels), index=None, horizontal=True, key=f"pick_{event.id}",
+                    format_func=lambda option_id: style.plain(labels[option_id]),
+                    label_visibility="collapsed")
+    stake_col, note_col, button_col = st.columns([1.2, 2, 1], vertical_alignment="center")
+    stake = stake_col.number_input(
+        "Stake", min_value=0.0, value=10.0, step=10.0, format="%.2f",
+        key=f"stake_{event.id}", label_visibility="collapsed",
+    )
+    amount = Decimal(f"{stake:.2f}")
+    style.show(where=note_col,
+               markup=f'<div class="ci-muted">{style.esc(_preview(summary, pick, amount))}</div>')
+    if button_col.button("Place bet", key=f"pick_bet_{event.id}", type="primary",
+                         width="stretch", disabled=pick is None):
+        attempt(
+            lambda: service.place_bet(user.id, event.id, pick, amount, _now()),
+            f"Bet placed: {style.money(amount)} on {style.plain(labels[pick])}.",
+        )
+        st.rerun()
+
+
+@st.dialog("Set the result")
+def _confirm_result(user: User, event_id: str, title: str, winners: List[str],
+                    names: List[str]) -> None:
+    """Ask 'Are you sure?' before the result of a names event is saved, as it cannot be undone."""
+    won = service.join_names(names)
+    style.show(
+        f'<div style="font-weight:800;font-size:1.05rem">{style.esc(title)}</div>'
+        f'<p style="margin:10px 0 4px">Winner{"s" if len(names) > 1 else ""}: <b>{style.esc(won)}</b></p>'
+        '<p class="ci-muted">Are you sure? Resolving cannot be undone.</p>'
+    )
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="confirm_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Yes, set the result", key="confirm_result", type="primary", width="stretch"):
+        attempt(
+            lambda: service.resolve_names_event(user.id, event_id, winners, _now()),
+            f"Result set: {style.plain(won)} won. Winners are paid out.",
+        )
+        st.rerun()
+
+
+@st.fragment
+def _names_resolve_row(user: User, summary: EventSummary) -> None:
+    """Draw the winner picker of a closed names event: one choice, or ticks when several can win."""
+    event = summary.event
+    labels = {option.id: option.name for option in event.options}
+    hint = "tick every name that happened" if event.multi_winner else "pick the name that happened"
+    style.show(f'<div class="ci-label">Set the result <span class="ci-muted" '
+               f'style="text-transform:none;letter-spacing:0">· {hint}</span></div>')
+    if event.multi_winner:
+        columns = st.columns(3)
+        picked = [option_id for index, option_id in enumerate(labels)
+                  if columns[index % 3].checkbox(style.plain(labels[option_id]),
+                                                 key=f"win_{event.id}_{option_id}")]
+    else:
+        one = st.radio("Winner", list(labels), index=None, horizontal=True, key=f"win_{event.id}",
+                       format_func=lambda option_id: style.plain(labels[option_id]),
+                       label_visibility="collapsed")
+        picked = [one] if one else []
+    if st.button("Set the result", key=f"names_result_{event.id}", type="primary", disabled=not picked):
+        _confirm_result(user, event.id, event.title, picked, [labels[i] for i in picked])
+
+
 def _resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
     """Draw the two buttons that set the result of a closed event."""
     event = summary.event
@@ -187,10 +355,16 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
     prefix = "wait" if event.status == STATUS_CLOSED else "ev"
     with st.container(key=f"{prefix}_{event.id}"):
         style.show(_event_head(user, summary, records, biggest))
-        if event.status == STATUS_OPEN:
+        names = betting.is_names_event(event)
+        if event.status == STATUS_OPEN and names:
+            _names_bet_form(user, summary)
+        elif event.status == STATUS_OPEN:
             _bet_form(user, summary, now)
         elif event.status == STATUS_CLOSED and _may_resolve(user, summary):
-            _resolve_row(user, summary, now)
+            if names:
+                _names_resolve_row(user, summary)
+            else:
+                _resolve_row(user, summary, now)
         _bets_panel(user, summary)
 
 
@@ -208,8 +382,8 @@ def _win_banner(page: PageData, me: MemberStats) -> str:
     if record is None:
         return ""
     summary = next((s for s in page.events if s.event.id == record.bet.event_id), None)
-    odds = stats.side_odds(summary, record.outcome) if summary else None
-    side = (record.outcome or "").upper()
+    odds = stats.side_odds(summary, record.bet.side) if summary else None
+    side = record.winner_label or (record.outcome or "").upper()
     sub = f"{side} won at {style.odds_text(odds)}"
     if me.streak >= 2:
         sub += f" · your streak is now {me.streak}"
@@ -280,7 +454,7 @@ def _nudge_card(page: PageData) -> str:
     found = stats.nudge(page.events, page.user.username)
     if found is None:
         return ""
-    side = "YES" if found.side == SIDE_YES else "NO"
+    side = style.esc(found.label)
     members = f"{found.bettors} member{'s' if found.bettors != 1 else ''} called it"
     return (
         f'<div class="ci-card ci-card-dark"><div class="ci-kicker">You vs the group</div>'
@@ -341,23 +515,50 @@ def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
         _side_column(page, me)
 
 
+@st.cache_data(ttl=60, show_spinner=False)
+def _member_names(user_id: str) -> List[str]:
+    """Return the usernames in the user's group (kept for a minute, so the dialog stays quick)."""
+    return service.group_member_names(user_id)
+
+
+def _typed_names(text: str) -> List[str]:
+    """Return the names typed one per line, without blank lines."""
+    return [line for line in (text or "").splitlines() if line.strip()]
+
+
 @st.dialog("New event")
 def new_event_dialog(user: User, now: datetime) -> None:
-    """Show the form that creates a new yes/no event in a pop-up."""
+    """Show the form that creates a new event in a pop-up: yes / no, or names to pick from."""
     today = now.astimezone(style.APP_TIMEZONE).date()
+    kind = st.radio("Type", KIND_CHOICES, horizontal=True, key="new_event_kind")
+    names_event = kind == KIND_CHOICES[1]
     with st.form("create_event", border=False):
-        title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH,
-                              placeholder="Will Ben finish the marathon?")
-        description = st.text_area("Details (optional)",
+        example = "Who is going to show up late?" if names_event else "Will Ben finish the marathon?"
+        title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example,
+                              key="new_event_title")  # the key keeps the text when the type changes
+        description = st.text_area("Details (optional)", key="new_event_details",
                                    max_chars=service.MAX_DESCRIPTION_LENGTH, height=80)
+        if names_event:
+            mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP)
+            picked = st.pills("Add group members", _member_names(user.id), selection_mode="multi",
+                              format_func=style.plain) or []
+            typed = st.text_area("Other names, one per line", height=90,
+                                 placeholder="People who are not in the app")
+            st.caption("2 to 10 names. They can't be changed after the event is created.")
         date_col, time_col = st.columns(2)
         day: date = date_col.date_input("Betting closes on", min_value=today,
                                         value=today + timedelta(days=1))
         clock: time = time_col.time_input("At (Lisbon time)", value=time(18, 0))
         if st.form_submit_button("Create event", type="primary", width="stretch"):
             closes = datetime.combine(day, clock, tzinfo=style.APP_TIMEZONE)
-            attempt(
-                lambda: service.create_event(user.id, title, closes, now, description),
+            options = list(picked) + _typed_names(typed) if names_event else None
+            several = names_event and mode == WINNER_CHOICES[1]
+            if attempt(
+                lambda: service.create_event(user.id, title, closes, _now(), description,
+                                             options=options, multi_winner=several),
                 "Event created.",
-            )
-            st.rerun()
+            ):
+                st.rerun()
+            # Keep the dialog open so nothing typed is lost. The message can quote a typed
+            # name, so Markdown in it is escaped.
+            st.error(style.plain(st.session_state.pop(FLASH_KEY, ("error", ""))[1]))
