@@ -73,9 +73,10 @@ def test_piece_colours_come_from_the_palette():
     assert colours and colours <= set(confetti.COLOURS)
 
 
-def test_amount_card_is_white_with_a_blue_amount():
+def test_amount_card_is_white_with_an_orange_amount():
     """The card must stand out on the black "You called it" banner as well as on the white page."""
-    assert "background:#FFFFFF" in confetti.CSS and "color:#3B3BE6" in confetti.CSS
+    assert "background:#FFFFFF" in confetti.CSS
+    assert f"color:{confetti.AMOUNT_COLOUR}" in confetti.CSS
 
 
 # --- which win gets confetti -------------------------------------------------------
