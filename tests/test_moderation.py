@@ -317,7 +317,7 @@ def test_majority_delete_deletes_with_refunds(path, four):
 
 @pytest.mark.parametrize("votes", [
     {1: "delete", 2: "keep"},          # tie
-    {},                                # nobody voted
+    {2: "keep"},                       # the flagger switched their flag vote to keep
     {1: "keep", 2: "keep", 3: "delete"},
 ])
 def test_tie_no_votes_or_keep_majority_reopens_and_clears_flags(path, four, votes):
@@ -373,7 +373,8 @@ def test_feed_card_gets_the_running_poll_and_the_flags(path, four):
     moderation.vote(ids[3], event_id, "keep", NOW, path)
     item = feed_item(path, ids[1], event_id)
     assert item.event.status == "paused"
-    assert (item.poll.closes_at, item.poll.votes) == (NOW + timedelta(hours=1), {ids[3]: "keep"})
+    assert (item.poll.closes_at, item.poll.votes) == (NOW + timedelta(hours=1),
+                                                      {ids[2]: "delete", ids[3]: "keep"})
 
 
 def test_feed_card_has_no_poll_after_it_ended(path, four):

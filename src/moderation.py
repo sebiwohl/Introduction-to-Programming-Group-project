@@ -6,9 +6,10 @@
   members: at least 25% of them (and at least 2) pauses the event and opens a
   poll; more than 50% (and at least 2) deletes it at once.
 - The admin can open a poll directly. A poll runs 1 hour, or until halfway to
-  the close if that is sooner. One vote each. More than 50% "delete" among the
-  votes cast deletes the event; a tie or no votes keeps it, clears the flags
-  and reopens betting.
+  the close if that is sooner. One vote each. Every unrestricted member who
+  flagged the event starts with a "delete" vote; they may switch it to "keep"
+  once. More than 50% "delete" among the votes cast deletes the event; a tie or
+  no votes keeps it, clears the flags and reopens betting.
 - There is no timer: end_due_polls() runs when a page loads (service.refresh).
 - Every flag, poll and deletion goes into the group's activity log (the bell
   of every member except whoever did it).
@@ -110,11 +111,20 @@ def _poll_end(now: datetime, close_time: datetime) -> datetime:
     return min(now + POLL_LENGTH, now + (close_time - now) / 2)
 
 
+def _flag_votes(data: dict, event: dict) -> dict:
+    """Return a "delete" vote for every unrestricted member who flagged the event."""
+    members = _unrestricted_members(data, event["group_id"])
+    return {user_id: VOTE_DELETE for user_id in event["flags"] if user_id in members}
+
+
 def _open_poll(data: dict, event: dict, opened_by: str, now: datetime) -> Poll:
-    """Pause the event and store a new poll on it; return the poll."""
+    """Pause the event and store a new poll on it; return the poll.
+
+    The members who flagged the event start with a "delete" vote.
+    """
     close_time = text_to_time(event["close_time"])
     poll = Poll(id=uuid.uuid4().hex, event_id=event["id"], opened_by=opened_by,
-                closes_at=_poll_end(now, close_time))
+                closes_at=_poll_end(now, close_time), votes=_flag_votes(data, event))
     event["status"] = STATUS_PAUSED
     data["polls"].append(poll_to_dict(poll))
     return poll
@@ -200,8 +210,19 @@ def open_poll(admin_id: str, event_id: str, now: datetime, path=None) -> Poll:
         return poll
 
 
+def vote_from_flag(votes: dict, flags: List[str], user_id: str) -> bool:
+    """Return True if the user's vote is still the "delete" vote their flag gave them.
+
+    Such a vote may be switched to "keep" once; after that it is final.
+    """
+    return user_id in flags and votes.get(user_id) == VOTE_DELETE
+
+
 def vote(user_id: str, event_id: str, choice: str, now: datetime, path=None) -> None:
-    """Cast the user's one vote, "delete" or "keep", in the event's running poll."""
+    """Cast the user's one vote, "delete" or "keep", in the event's running poll.
+
+    A member whose flag gave them a "delete" vote may switch it to "keep" once.
+    """
     if choice not in (VOTE_DELETE, VOTE_KEEP):
         raise AuthError('Vote "delete" or "keep".')
     with storage.transaction(path) as data:
@@ -210,7 +231,8 @@ def vote(user_id: str, event_id: str, choice: str, now: datetime, path=None) -> 
         poll = _running_poll(data, event_id)
         if poll is None or now >= text_to_time(poll["closes_at"]):
             raise AuthError("There is no running poll on this event.")
-        if user_id in poll["votes"]:
+        switching = choice == VOTE_KEEP and vote_from_flag(poll["votes"], event["flags"], user_id)
+        if user_id in poll["votes"] and not switching:
             raise AuthError("You have already voted in this poll.")
         poll["votes"][user_id] = choice
 
