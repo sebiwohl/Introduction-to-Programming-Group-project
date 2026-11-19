@@ -21,7 +21,7 @@ from src.ui.account import create_group_form, join_group_form, log_out
 from src.ui.actions import attempt
 
 STATS_GROUP_KEY = "profile_stats_group"  # the group the Profile stats are shown for
-PERIOD_KEY = "profile_stats_period"  # This period / All time for the Profile stats
+PERIOD_KEY = "profile_stats_period"  # Since last repayment / All time
 
 
 def _tile(order: int, label: str, value: str, note: str, extra: str = "") -> str:
@@ -105,7 +105,7 @@ def _main_tiles(page: PageData, me: MemberStats, profile: ProfileStats,
     """Return the Coins, Ranking, Bets and Hit rate tiles."""
     mine = next((r for r in page.leaderboard if r.username == page.user.username), None)
     change = mine.result if mine else page.user.balance - page.user.received
-    coins_note = (f"{style.signed(change)} this period · "
+    coins_note = (f"{style.signed(change)} since last repayment · "
                   f"received {style.money(page.user.received)}")
     if row is None:
         rank, rank_note = "—", "Not on the leaderboard"
@@ -188,8 +188,8 @@ def _stats_choice(page: PageData) -> tuple:
                                format_func=names.get, label_visibility="collapsed")
     period = period_col.radio("Period", stats.PERIODS, horizontal=True, key=PERIOD_KEY,
                               label_visibility="collapsed",
-                              help="This period: since the last repayment. An event counts in "
-                                   "the period in which its betting closes.")
+                              help="Since last repayment: only events whose betting closed "
+                                   "after the last repayment count.")
     if chosen == page.group.id:
         return page, period
     try:

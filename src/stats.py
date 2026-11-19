@@ -453,9 +453,9 @@ def countdown(close_time: datetime, now: datetime) -> Countdown:
     return Countdown(text, urgent=left <= COUNTDOWN_URGENT, closed=False)
 
 
-# --- This period / All time ------------------------------------------------------
+# --- Since last repayment / All time ------------------------------------------------------
 
-THIS_PERIOD = "This period"
+THIS_PERIOD = "Since last repayment"
 ALL_TIME = "All time"
 PERIODS = (THIS_PERIOD, ALL_TIME)
 
