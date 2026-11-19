@@ -102,7 +102,7 @@ Methods considered and not chosen:
 7. The leaderboard shows everyone's balance.
 
 ### 3.2 Core features (must have)
-- **Event feed:** a list of events in the user's groups, showing title, status, creator, close time, the pool, the stake on each side and the current odds. A timer shows the time left until betting closes; it refreshes every minute and turns red in the last 3 hours. "Closing soon" means betting closes within the next 3 hours.
+- **Event feed:** a list of events in the user's groups, showing title, status, creator, close time, the pool, the stake on each side and the current odds. A timer shows the time left until betting closes; it refreshes every minute and turns red in the last 3 hours. "Closing soon" means betting closes within the next 12 hours.
 - **Create event:** title, optional details, a type and an event date, and when betting closes. "Betting closes" options: at the event start, 1 hour before, 1 day before, or custom (a day and an hour field). Betting always closes no later than the event date; there is no "never" option, because betting while the result is already known would give free profits. Types: yes / no, names, or over / under. For over / under the creator sets the line (a number) when creating the event; the line cannot change afterwards, and members bet on "over" or "under" that number. For names (for example "Who is going to show up later?") the creator lists 2 to 10 names: group members picked from a list and/or names typed in (trimmed, not empty, at most 40 characters, no duplicates ignoring case). The names cannot change after the event is created. The creator also chooses "one winner" or "several can win".
 - **Place bet:** choose an event, a side (or one name of a names event) and a stake. The stake must be a positive number and cannot exceed the balance, and the event must be open. A member may bet on both sides of the same event (to hedge), and on several names of a names event.
 - **Delete event:** the creator or the admin can delete an event up to 3 hours before betting closes. All stakes are refunded. After that, an event can only be removed by flag and poll.
@@ -365,7 +365,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Over / under bets: in scope; the creator sets the line when creating the event, and it cannot change. To resolve, the creator or admin types in the actual number; a result exactly on the line refunds every stake.
 - Betting on both sides of one event: allowed.
 - Pressing "Repaid": admin only.
-- Timer: refreshes every minute; red and "Closing soon" in the last 3 hours.
+- Timer: refreshes every minute; red in the last 3 hours. "Closing soon" tab: betting closes within the next 12 hours.
 
 ### 6.2 Still open
 - Nothing open at the moment.

@@ -36,7 +36,7 @@ AWAITING = "awaiting"
 OPEN = "open"
 PAUSED = "paused"
 
-CLOSING_SOON = timedelta(hours=24)
+CLOSING_SOON = timedelta(hours=12)  # the "Closing soon" tab (decided: 12 hours)
 COUNTDOWN_URGENT = timedelta(hours=3)  # the countdown turns red this close to the close (3.2)
 FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
 # An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).

@@ -263,3 +263,9 @@ def test_hot_bets_most_bettors_first():
 def test_bettor_count_counts_people_not_bets():
     event = summary("e", "open", [("Ann", "yes", 5), ("Ann", "no", 5), ("Ben", "yes", 1)])
     assert stats.bettor_count(event) == 2
+
+
+def test_closing_soon_means_within_12_hours():
+    events = [summary("in", "open", [], hours=12), summary("out", "open", [], hours=12.1)]
+    soon = [s.event.id for s in stats.filter_events(events, "Closing soon", NOW)]
+    assert soon == ["in"]
