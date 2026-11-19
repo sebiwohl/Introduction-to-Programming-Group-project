@@ -90,7 +90,8 @@ def _tags(summary: EventSummary, biggest: bool) -> str:
     elif event.status == STATUS_CLOSED:
         pills, meta = style.pill("Awaiting result", "waiting"), f"Betting closed {style.when(event.close_time)}"
     elif event.status == STATUS_RESOLVED and betting.is_names_event(event):
-        pills = style.pill("Resolved", "resolved") + style.pill(f"{service.winner_label(event)} won", "won")
+        # the same pill as a yes/no result ("yes won")
+        pills = style.pill("Resolved", "resolved") + style.pill(f"{service.winner_label(event)} won", SIDE_YES)
         meta = f"Closed {style.when(event.close_time)}"
     elif event.status == STATUS_RESOLVED:
         side = event.outcome or SIDE_YES
