@@ -110,6 +110,7 @@ Methods considered and not chosen:
 - **Close and resolve:** after the close time the event is locked. After the event date, the creator or the admin (whoever is first) sets the outcome. Before it is saved, a popup asks "Are you sure? Resolving cannot be undone." There is no undo, so nobody can go back to old events later and change results to shift balances. Once the outcome is set, payouts are calculated. For over / under they type in the actual number: above the line means "over" wins, below means "under" wins, and exactly on the line refunds every stake. For names they pick the winning name, or every winning name when several can win.
 - **Balance and history:** each user sees their balance and their past bets with results.
 - **Leaderboard:** members ranked by balance.
+- **Win confetti:** when a result is set, every member who won coins on that event (more paid out than they staked) gets a "You called it" notification. The next time they are on the Feed, confetti falls for 4 seconds with the amount won ("YOU WON +15 COINS"), once per win and on whatever device they use; the notification is then marked read. While the Feed is open it checks for a new win every 30 seconds, so a winner who is already looking at the app sees it without clicking. Losers and refunds get no confetti, and neither do wins from before this feature existed.
 
 ### 3.3 Event states
 
@@ -260,6 +261,8 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | text       | The message                          |
 | created_at | When it was created                  |
 | read       | true once the user has seen it       |
+
+Win notifications (for the confetti) have the id `win:<event id>:<user id>` and become read once the confetti has been shown.
 
 ### 4.3 Calculated, not stored
 Pool, stake per side, odds and the leaderboard are calculated from the bets and balances when needed. This keeps the stored data consistent.

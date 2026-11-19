@@ -27,6 +27,7 @@ from src.convert import (
     find_membership,
     group_from_dict,
     group_to_dict,
+    notification_to_dict,
     poll_from_dict,
     poll_to_dict,
     user_from_dict,
@@ -47,6 +48,7 @@ from src.models import (
     Bet,
     Event,
     Group,
+    Notification,
     Poll,
     User,
 )
@@ -423,14 +425,27 @@ def get_user(user_id: str, path=None) -> User:
 
 
 @dataclass
+class NewWin:
+    """A win the user has not celebrated yet: its message id, the event and the coins won."""
+
+    notification_id: str
+    event_title: str
+    amount: Decimal
+
+
+@dataclass
 class PageData:
-    """Everything the main screens show, read from one load of the data."""
+    """Everything the main screens show, read from one load of the data.
+
+    new_wins are the user's wins announced since they last saw them (for the confetti).
+    """
 
     user: User
     group: Optional[Group]
     events: List[EventSummary]
     my_bets: List[BetRecord]
     leaderboard: List[LeaderboardRow]
+    new_wins: List[NewWin] = field(default_factory=list)
 
 
 def page_data(user_id: str, now: datetime, path=None) -> PageData:
@@ -441,10 +456,12 @@ def page_data(user_id: str, now: datetime, path=None) -> PageData:
     it is closed and saved first (rare), and the data is read again.
     """
     _require_aware(now, "now")
-    state = _load(path)
+    data = storage.load_data(path)
+    state = _unpack(data)
     if _close_expired(state, now):
         refresh(now, path)
-        state = _load(path)
+        data = storage.load_data(path)
+        state = _unpack(data)
     user = _get_user(state, user_id)
     return PageData(
         user=user,
@@ -452,6 +469,7 @@ def page_data(user_id: str, now: datetime, path=None) -> PageData:
         events=_feed(state, user),
         my_bets=_bet_history(state, user),
         leaderboard=_leaderboard(state, user),
+        new_wins=_new_wins(data, state, user.id),
     )
 
 
@@ -570,6 +588,7 @@ def resolve_event(
             event, _bets_on(state, event.id), outcome, state.users, now
         )
         _pack(state, data)
+        _announce_wins(data, event, _bets_on(state, event.id), now)
     return total
 
 
@@ -592,6 +611,7 @@ def resolve_names_event(
             event, _bets_on(state, event.id), winners, state.users, now
         )
         _pack(state, data)
+        _announce_wins(data, event, _bets_on(state, event.id), now)
     return total
 
 
@@ -633,3 +653,70 @@ def set_avatar(user_id: str, avatar: str, path=None) -> User:
         user.avatar = avatar
         _pack(state, data)
     return user
+
+
+# --- win announcements (for the confetti) ----------------------------------------
+#
+# When a result is set, every member who won coins on the event gets an unread
+# notification with the id "win:<event id>:<user id>". The Feed shows confetti
+# for unread ones and then marks them read, so each win is celebrated once, on
+# whatever device the winner uses next. Data saved before this has no such
+# notifications, so old wins never set off confetti.
+
+WIN_PREFIX = "win:"
+
+
+def _net_won(bets: List[Bet], user_id: str) -> Decimal:
+    """Return what the user's bets on one resolved event paid on top of their stakes."""
+    mine = [bet for bet in bets if bet.user_id == user_id]
+    return sum((bet.payout or Decimal("0")) - bet.stake for bet in mine) if mine else Decimal("0")
+
+
+def _announce_wins(data: dict, event: Event, bets: List[Bet], now: datetime) -> None:
+    """Add an unread "You called it" notification for each member who won coins on the event.
+
+    Refunds and members whose bets lost (or lost more than they won, when they
+    backed several sides) get none.
+    """
+    for user_id in dict.fromkeys(bet.user_id for bet in bets):
+        if _net_won(bets, user_id) > 0:
+            note = Notification(
+                id=f"{WIN_PREFIX}{event.id}:{user_id}", user_id=user_id, group_id=event.group_id,
+                text=f"You called it: “{event.title}”", created_at=now,
+            )
+            data["notifications"].append(notification_to_dict(note))
+
+
+def _unseen_win_notes(data: dict, user_id: str) -> List[dict]:
+    """Return the user's unread win notifications, oldest first."""
+    return [note for note in data["notifications"]
+            if note["user_id"] == user_id and not note["read"] and note["id"].startswith(WIN_PREFIX)]
+
+
+def _new_wins(data: dict, state: _State, user_id: str) -> List[NewWin]:
+    """Return the user's announced wins they have not seen yet, with the coins won."""
+    wins = []
+    for note in _unseen_win_notes(data, user_id):
+        event_id = note["id"][len(WIN_PREFIX):].rsplit(":", 1)[0]
+        event = state.events.get(event_id)
+        if event is not None:
+            wins.append(NewWin(notification_id=note["id"], event_title=event.title,
+                               amount=_net_won(_bets_on(state, event_id), user_id)))
+    return wins
+
+
+def has_new_win(user_id: str, path=None) -> bool:
+    """Return True if a result has made the user a winner they have not seen yet (one read)."""
+    return bool(_unseen_win_notes(storage.load_data(path), user_id))
+
+
+def mark_wins_seen(user_id: str, notification_ids: List[str], path=None) -> None:
+    """Mark the user's win notifications as read, so their confetti never plays again.
+
+    Only the user's own notifications change; unknown ids are ignored.
+    """
+    wanted = set(notification_ids)
+    with storage.transaction(path) as data:
+        for note in data["notifications"]:
+            if note["user_id"] == user_id and note["id"] in wanted:
+                note["read"] = True

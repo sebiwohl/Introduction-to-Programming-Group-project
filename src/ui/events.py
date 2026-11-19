@@ -5,6 +5,7 @@ options are names, such as people in the group) show one row per option
 instead, built from the same pieces and colours.
 """
 
+import time as clock
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -16,7 +17,8 @@ from src.betting import BettingError
 from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, STATUS_RESOLVED, User
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
-from src.ui import nav, style
+from src.ui import confetti, nav, style
+from src.storage import StorageError
 from src.ui.actions import FLASH_KEY, attempt
 
 SIDES = (SIDE_YES, SIDE_NO)
@@ -25,6 +27,10 @@ KIND_CHOICES = ("Yes / No", "Names")
 WINNER_CHOICES = ("One winner", "Several can win")
 SEVERAL_HELP = ("Several names can win. Everyone who backed a winning name shares the whole pool, "
                 "so a name's odds are the most it can pay: the more names win, the less each pays.")
+WIN_CHECK_SECONDS = 30  # while the Feed is open, look for a newly announced win this often
+LAST_LOAD_KEY = "feed_loaded_at"  # when the Feed last loaded fully (it then checked for wins itself)
+CONFETTI_PARAM = "confetti"  # add ?confetti to the address to see it on demand (for the demo)
+DEMO_WIN = Decimal("22")  # the amount ?confetti shows when the user has not won anything yet
 
 
 def _now() -> datetime:
@@ -474,6 +480,50 @@ def _side_column(page: PageData, me: MemberStats) -> None:
     style.show(_nudge_card(page))
 
 
+def _amount_won(page: PageData) -> str:
+    """Return what the user's latest win made on top of the stake, like '+15' ('' if none)."""
+    record = stats.latest_win(page.my_bets)
+    return style.signed(record.bet.payout - record.bet.stake) if record else ""
+
+
+def _confetti(page: PageData) -> str:
+    """Return confetti and the coins won for wins announced since the user last saw them, else ''.
+
+    Each win plays once: its notification is marked read before the confetti is
+    shown, so it does not come back on the next click, login or device. Several
+    new wins show their total. ?confetti in the address plays it once on demand
+    (with the latest win's amount, or a sample), for the demo.
+    """
+    if CONFETTI_PARAM in st.query_params:
+        del st.query_params[CONFETTI_PARAM]  # so it plays one time, not on every click
+        return confetti.markup(_amount_won(page) or style.signed(DEMO_WIN))
+    if not page.new_wins:
+        return ""
+    try:
+        service.mark_wins_seen(page.user.id, [win.notification_id for win in page.new_wins])
+    except StorageError:
+        pass  # still celebrate; it may play once more next time
+    return confetti.markup(style.signed(sum(win.amount for win in page.new_wins)))
+
+
+@st.fragment(run_every=WIN_CHECK_SECONDS)
+def _watch_for_wins(user_id: str) -> None:
+    """While the Feed is open, check every WIN_CHECK_SECONDS whether a result made the user a winner.
+
+    If so, the whole page reloads and shows the confetti, so a winner who is
+    already looking at the app gets it without clicking. Right after a full
+    page load the check is skipped: that load has just looked for wins itself.
+    """
+    if clock.monotonic() - st.session_state.get(LAST_LOAD_KEY, 0.0) < WIN_CHECK_SECONDS - 1:
+        return
+    try:
+        new_win = service.has_new_win(user_id)
+    except StorageError:
+        return
+    if new_win:
+        st.rerun()
+
+
 # Icon and color of each feed tab (see style.tab_colors).
 TAB_ICONS = {
     "All": ("apps", "yellow"),
@@ -495,6 +545,9 @@ def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
     style.show(style.heading(page.group.name, _feed_kicker(page.events)))
     left, right = st.columns([2.5, 1], gap="large")
     with left:
+        style.show(_confetti(page))
+        st.session_state[LAST_LOAD_KEY] = clock.monotonic()
+        _watch_for_wins(page.user.id)
         style.show(_win_banner(page, me))
         style.tab_colors(FILTER_KEY, [TAB_ICONS[f][1] for f in stats.FEED_FILTERS])
         choice = st.radio("Show", stats.FEED_FILTERS, horizontal=True, key=FILTER_KEY,
