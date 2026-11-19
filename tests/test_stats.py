@@ -203,3 +203,63 @@ def test_nudge_picks_biggest_pool_without_the_user():
 def test_nudge_none_when_user_bet_everywhere_or_no_pool():
     events = [summary("a", "open", [("You", "yes", 5)]), summary("b", "open", [])]
     assert stats.nudge(events, "You") is None
+
+
+def test_profile_stats_counts_bets_money_and_biggest_win():
+    records = [
+        record("resolved", 100, payout=250),          # won +150
+        record("resolved", 50, payout=80),            # won +30
+        record("resolved", 40, payout=0),             # lost -40
+        record("resolved", 20, payout=20),            # refunded
+        record("deleted", 10),                        # refunded (event deleted)
+        record("open", 30),
+        record("closed", 5),
+    ]
+    records[0].event_title = "Big one"
+    events = [summary("a", "open", []), summary("b", "closed", [])]
+    events[1].event.creator_id = "someone else"
+    profile = stats.profile_stats(records, events, "u1")
+    assert (profile.bets, profile.won, profile.lost, profile.refunded, profile.unsettled) == (
+        7, 2, 1, 2, 2)
+    assert profile.total_staked == Decimal("255")
+    assert profile.net_won == Decimal("140")
+    assert (profile.biggest_win, profile.biggest_win_title) == (Decimal("150"), "Big one")
+    assert profile.events_created == 1
+
+
+def test_profile_stats_empty_user():
+    profile = stats.profile_stats([], [], "u1")
+    assert (profile.bets, profile.net_won, profile.biggest_win) == (0, Decimal("0"), None)
+
+
+def test_my_row_finds_user_or_none():
+    board = rows(("Ann", 1200), ("You", 900))
+    assert stats.my_row(board, "You").rank == 2
+    assert stats.my_row(board, "Nobody") is None
+
+
+def test_hot_bets_need_half_the_group_and_at_least_two_people():
+    events = [
+        summary("three", "open", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "yes", 5)]),
+        summary("two", "open", [("Ann", "yes", 5), ("Ben", "no", 5)]),
+        summary("one_twice", "open", [("Ann", "yes", 5), ("Ann", "no", 5)]),
+        summary("closed", "closed", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "no", 5)]),
+    ]
+    hot = lambda size: [s.event.id for s in stats.filter_events(events, "Hot bets", NOW, size)]  # noqa: E731
+    assert hot(4) == ["three", "two"]          # half of 4 is 2 people
+    assert hot(6) == ["three"]                 # half of 6 is 3 people
+    assert hot(1) == ["three", "two"]          # never fewer than 2 people
+    assert hot(10) == []                       # nobody reaches 5 bettors
+
+
+def test_hot_bets_most_bettors_first():
+    events = [
+        summary("two", "open", [("Ann", "yes", 5), ("Ben", "no", 5)]),
+        summary("three", "open", [("Ann", "yes", 5), ("Ben", "no", 5), ("Cleo", "yes", 5)]),
+    ]
+    assert [s.event.id for s in stats.filter_events(events, "Hot bets", NOW, 4)] == ["three", "two"]
+
+
+def test_bettor_count_counts_people_not_bets():
+    event = summary("e", "open", [("Ann", "yes", 5), ("Ann", "no", 5), ("Ben", "yes", 1)])
+    assert stats.bettor_count(event) == 2

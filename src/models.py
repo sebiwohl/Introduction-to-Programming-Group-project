@@ -23,6 +23,9 @@ STATUS_CLOSED = "closed"
 STATUS_RESOLVED = "resolved"
 STATUS_DELETED = "deleted"
 
+# Profile pictures a user can pick (stored by name; "" means none picked yet).
+AVATARS = ("fox", "panda", "cat", "dog", "frog", "owl", "rabbit")
+
 VOTE_DELETE = "delete"
 VOTE_KEEP = "keep"
 
@@ -52,6 +55,7 @@ class User:
     group_id: Optional[str] = None
     role: str = ROLE_MEMBER
     balance: Decimal = Decimal("0")
+    avatar: str = ""
 
 
 @dataclass

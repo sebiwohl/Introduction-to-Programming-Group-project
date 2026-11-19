@@ -35,6 +35,8 @@ FRIENDS = ("anna", "ben")
 GROUP_NAME = "Demo Friends"
 START_BALANCE = Decimal("1000")
 PASSWORD_ENV = "SEED_PASSWORD"
+# Profile pictures for the demo; ben keeps his initial to show the default.
+PICTURES = {ADMIN: "fox", MEMBER: "panda", "anna": "cat"}
 
 
 def _target(use_database: bool):
@@ -54,11 +56,13 @@ def _confirm_database() -> None:
 
 
 def _users(password: str, path) -> dict:
-    """Create the demo accounts and the group; return {username: user id}."""
+    """Create the demo accounts, the group and the profile pictures; return {username: user id}."""
     ids = {name: auth.sign_up(name, password, path).id for name in (ADMIN, MEMBER, *FRIENDS)}
     group = auth.create_group(ids[ADMIN], GROUP_NAME, START_BALANCE, path)
     for name in (MEMBER, *FRIENDS):
         auth.join_group(ids[name], group.invite_code, path)
+    for name, animal in PICTURES.items():
+        service.set_avatar(ids[name], animal, path)
     return ids
 
 

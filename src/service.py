@@ -34,6 +34,7 @@ from src.convert import (
     money_to_cents,
 )
 from src.models import (
+    AVATARS,
     TYPE_NAMES,
     TYPE_YES_NO,
     SIDE_NO,
@@ -137,6 +138,7 @@ class LeaderboardRow:
     balance: Decimal
     is_admin: bool = False
     open_bets: int = 0
+    avatar: str = ""
 
 
 # --- loading and saving -------------------------------------------------------
@@ -381,7 +383,7 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
         rows.append(LeaderboardRow(
             rank=rank, username=member.username, balance=member.balance,
             is_admin=auth.is_group_admin(member, user.group_id),
-            open_bets=open_bets.get(member.id, 0),
+            open_bets=open_bets.get(member.id, 0), avatar=member.avatar,
         ))
     return rows
 
@@ -616,3 +618,18 @@ def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
     """
     state = _load(path)
     return _leaderboard(state, _get_user(state, user_id))
+
+
+def set_avatar(user_id: str, avatar: str, path=None) -> User:
+    """Save the user's own profile picture (one of AVATARS) and return the user.
+
+    Only the logged-in user's id is passed in, so users can change only their own.
+    """
+    if avatar not in AVATARS:
+        raise BettingError("Pick one of the animal pictures.")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        user = _get_user(state, user_id)
+        user.avatar = avatar
+        _pack(state, data)
+    return user

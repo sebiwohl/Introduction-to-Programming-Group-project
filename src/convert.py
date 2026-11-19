@@ -111,8 +111,14 @@ def text_to_time(text: str) -> datetime:
 # --- users and groups -------------------------------------------------------
 
 def user_to_dict(user: User) -> dict:
-    """Return a User as a dict for storage (group, role and balance are not stored here)."""
-    return {"id": user.id, "username": user.username, "password_hash": user.password_hash}
+    """Return a User as a dict for storage (group, role and balance are not stored here).
+
+    The avatar is left out until the user picks one.
+    """
+    data = {"id": user.id, "username": user.username, "password_hash": user.password_hash}
+    if user.avatar:
+        data["avatar"] = user.avatar
+    return data
 
 
 def find_membership(memberships: Iterable[dict], user_id: str) -> Optional[dict]:
@@ -122,7 +128,8 @@ def find_membership(memberships: Iterable[dict], user_id: str) -> Optional[dict]
 
 def user_from_dict(data: dict, membership: Optional[dict] = None) -> User:
     """Return a User from a stored dict, with group, role and balance from the membership."""
-    user = User(id=data["id"], username=data["username"], password_hash=data["password_hash"])
+    user = User(id=data["id"], username=data["username"], password_hash=data["password_hash"],
+                avatar=data.get("avatar", ""))
     if membership is not None:
         user.group_id = membership["group_id"]
         user.role = membership["role"]

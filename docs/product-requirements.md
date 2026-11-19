@@ -166,6 +166,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | id            | Unique identifier                   |
 | username      | Unique name                         |
 | password_hash | Salted hash, never the plain password |
+| avatar        | Optional profile picture: fox, panda, cat, dog, frog, owl or rabbit (left out until the user picks one) |
 
 **Membership** (a user's place in one group)
 

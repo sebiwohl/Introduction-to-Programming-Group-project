@@ -1,11 +1,11 @@
-# "Called it!" look: white, black type, blue for YES, orange-red for NO.
+# "Called it!" look: white with an orange accent, black type, yellow for YES, orange-red for NO.
 # Change colours and font here; the matching CSS colours are at the top of src/ui/style.py.
 [theme]
 base = "light"
-primaryColor = "#0A0A0A"
+primaryColor = "#EA580C"
 backgroundColor = "#FFFFFF"
-secondaryBackgroundColor = "#F4F4F6"
+secondaryBackgroundColor = "#FFF7ED"
 textColor = "#111111"
-borderColor = "#E6E6EB"
+borderColor = "#F6E3D3"
 baseRadius = "12px"
 font = "Inter:https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap"

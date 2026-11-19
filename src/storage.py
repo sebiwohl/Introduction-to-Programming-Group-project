@@ -194,6 +194,10 @@ RULES: dict[str, dict[str, Rule]] = {
         "id": (_is_text, "a non-empty string"),
         "username": (_is_text, "a non-empty string"),
         "password_hash": (_is_text, "a non-empty string"),
+        "avatar": (
+            partial(_is_choice, ("fox", "panda", "cat", "dog", "frog", "owl", "rabbit")),
+            "fox, panda, cat, dog, frog, owl or rabbit",
+        ),
     },
     "memberships": {
         "id": (_is_text, "a non-empty string"),
@@ -227,6 +231,11 @@ RULES: dict[str, dict[str, Rule]] = {
         "line": (_nullable(_is_decimal_text), "a decimal number as text, or null"),
         "event_time": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
         "result_value": (_nullable(_is_decimal_text), "a decimal number as text, or null"),
+        # names events only (see OPTIONAL and _check_names_fields)
+        "options": (_is_options, f"{MIN_OPTIONS} to {MAX_OPTIONS} options, each with a unique id "
+                    f"and a unique, trimmed name of at most {MAX_OPTION_LENGTH} characters"),
+        "multi_winner": (_is_bool, "true or false"),
+        "winners": (_is_text_list, "a list of unique option ids"),
     },
     "bets": {
         "id": (_is_text, "a non-empty string"),
@@ -268,17 +277,10 @@ RULES: dict[str, dict[str, Rule]] = {
 }
 
 
-# Fields a record may leave out. Only names events have these; other events
-# are stored without them, exactly as before names events existed.
-OPTIONAL_RULES: dict[str, dict[str, Rule]] = {
-    "events": {
-        "options": (_is_options, f"{MIN_OPTIONS} to {MAX_OPTIONS} options, each with a unique id "
-                    f"and a unique, trimmed name of at most {MAX_OPTION_LENGTH} characters"),
-        "multi_winner": (_is_bool, "true or false"),
-        "winners": (_is_text_list, "a list of unique option ids"),
-    },
-}
+# Fields a record may leave out (added after data was first saved). The names
+# fields exist only on names events: other events are stored without them.
 NAMES_FIELDS = ("options", "multi_winner", "winners")
+OPTIONAL: dict[str, set[str]] = {"users": {"avatar"}, "events": set(NAMES_FIELDS)}
 
 
 # ---------------------------------------------------------------------------
@@ -340,17 +342,17 @@ def _collect_ids(data: Data) -> dict[str, set[str]]:
 def _check_record(section: str, record: Data, index: int, ids: dict[str, set[str]]) -> None:
     """Check that a record has exactly the allowed fields and that each value is valid.
 
-    Fields in OPTIONAL_RULES may be missing; when present they are checked too.
+    Fields in OPTIONAL may be missing; when present they are checked too.
     """
     label = _label(section, record, index)
     rules = RULES[section]
-    optional = OPTIONAL_RULES.get(section, {})
-    for field in sorted(rules.keys() - record.keys()):
+    for field in sorted(rules.keys() - record.keys() - OPTIONAL.get(section, set())):
         raise StorageError(f"{label}.{field} is missing")
-    for field in sorted(map(str, record.keys() - rules.keys() - optional.keys())):
+    for field in sorted(map(str, record.keys() - rules.keys())):
         raise StorageError(f"{label}.{field} is not an allowed field")
-    present = {**rules, **{name: rule for name, rule in optional.items() if name in record}}
-    for field, (predicate, description) in present.items():
+    for field, (predicate, description) in rules.items():
+        if field not in record:
+            continue
         if not predicate(record[field], ids):
             raise StorageError(f"{label}.{field} must be {description}, got {record[field]!r}")
 

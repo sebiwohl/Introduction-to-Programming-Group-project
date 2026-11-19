@@ -8,9 +8,15 @@ from src.service import PageData
 from src.stats import MemberStats
 from src.ui import style
 
-FEED, MY_BETS, LEADERBOARD, GROUP = "Feed", "My bets", "Leaderboard", "Group"
-PAGES = (FEED, MY_BETS, LEADERBOARD, GROUP)
+FEED, MY_BETS, LEADERBOARD, GROUP, PROFILE = "Feed", "My bets", "Leaderboard", "Group", "Profile"
+PAGES = (FEED, MY_BETS, LEADERBOARD, GROUP, PROFILE)
 NAV_KEY = "nav"
+
+
+def page_key(page_name: str) -> str:
+    """Return the container key for a page, e.g. 'page_2'; each page fades in under its own key."""
+    index = PAGES.index(page_name) if page_name in PAGES else 0
+    return f"page_{index}"
 
 
 def go_to(page_name: str) -> None:
@@ -35,7 +41,7 @@ def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -
     """
     with st.container(key="topbar"):
         logo_col, nav_col, stats_col, button_col = st.columns(
-            [1.5, 3.4, 1.2, 1.2], vertical_alignment="center"
+            [1.4, 4.0, 1.1, 1.2], vertical_alignment="center"
         )
         style.show(where=logo_col, markup=style.logo())
         with nav_col:

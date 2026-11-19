@@ -10,6 +10,7 @@ a call is a stake on one option; it is refunded when nobody backed a winning
 option, or when every stake was on a winning option (everyone got it back).
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
@@ -36,7 +37,10 @@ OPEN = "open"
 PAUSED = "paused"
 
 CLOSING_SOON = timedelta(hours=24)
-FEED_FILTERS = ("All", "Open", "Closing soon", "Awaiting result", "Done")
+FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
+# An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).
+HOT_SHARE = 0.5
+HOT_MIN_BETTORS = 2
 RANKINGS = ("Coins", "Hit rate", "Best call", "Streak")
 UNSETTLED = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
 
@@ -240,8 +244,28 @@ def closest_rival(rows: List[LeaderboardRow], username: str) -> Optional[Leaderb
     return max(others, key=lambda r: r.balance)
 
 
-def filter_events(summaries: List[EventSummary], choice: str, now: datetime) -> List[EventSummary]:
-    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all."""
+def bettor_count(summary: EventSummary) -> int:
+    """Return how many different members have bet on the event."""
+    return len({b.username for b in summary.bettors})
+
+
+def is_hot(summary: EventSummary, group_size: int) -> bool:
+    """Return True for an open event that at least half the group (and 2+ people) bet on."""
+    needed = max(HOT_MIN_BETTORS, math.ceil(group_size * HOT_SHARE))
+    return summary.event.status == STATUS_OPEN and bettor_count(summary) >= needed
+
+
+def filter_events(summaries: List[EventSummary], choice: str, now: datetime,
+                  group_size: int = 0) -> List[EventSummary]:
+    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all.
+
+    group_size is the number of members, used to decide which events are hot.
+    Hot bets come with the most bettors first.
+    """
+    if choice == "Hot bets":
+        hot = [s for s in summaries if is_hot(s, group_size)]
+        return sorted(hot, key=bettor_count, reverse=True)
+
     def keep(summary: EventSummary) -> bool:
         """Return True if the event belongs in the chosen tab."""
         status = summary.event.status
@@ -335,3 +359,64 @@ def nudge(summaries: List[EventSummary], username: str) -> Optional[Nudge]:
     lead = best.stake_yes if side == SIDE_YES else best.stake_no
     return Nudge(summary=best, side=side, share=round(lead / best.pool * 100),
                  bettors=len(names), label=side.upper())
+
+
+@dataclass
+class ProfileStats:
+    """Counts and totals of one user's own bets, for the Profile page.
+
+    unsettled counts bets on open, paused or closed events. total_staked is every
+    stake ever placed; net_won is payouts minus stakes on settled bets only.
+    """
+
+    bets: int = 0
+    won: int = 0
+    lost: int = 0
+    refunded: int = 0
+    unsettled: int = 0
+    total_staked: Decimal = Decimal("0")
+    net_won: Decimal = Decimal("0")
+    biggest_win: Optional[Decimal] = None
+    biggest_win_title: str = ""
+    events_created: int = 0
+
+
+def _add_record(profile: ProfileStats, record: BetRecord) -> None:
+    """Update the profile totals with one of the user's bets."""
+    bet = record.bet
+    result = bet_result(record)
+    profile.bets += 1
+    profile.total_staked += bet.stake
+    if result not in (WON, LOST, REFUNDED):
+        profile.unsettled += 1
+        return
+    paid = bet.payout if bet.payout is not None else bet.stake
+    profile.net_won += paid - bet.stake
+    if result == WON:
+        profile.won += 1
+        gain = paid - bet.stake
+        if profile.biggest_win is None or gain > profile.biggest_win:
+            profile.biggest_win, profile.biggest_win_title = gain, record.event_title
+    elif result == LOST:
+        profile.lost += 1
+    else:
+        profile.refunded += 1
+
+
+def profile_stats(records: List[BetRecord], summaries: List[EventSummary],
+                  user_id: str) -> ProfileStats:
+    """Return the user's bet counts, money totals, biggest win and events created.
+
+    records are the user's own bets (service._bet_history); summaries are the
+    group's visible events, used to count the ones the user created.
+    """
+    profile = ProfileStats()
+    for record in records:
+        _add_record(profile, record)
+    profile.events_created = sum(1 for s in summaries if s.event.creator_id == user_id)
+    return profile
+
+
+def my_row(rows: List[LeaderboardRow], username: str) -> Optional[LeaderboardRow]:
+    """Return the user's own leaderboard row, or None if they are not on it."""
+    return next((r for r in rows if r.username == username), None)
