@@ -3,14 +3,15 @@
 Three kinds of event share the same pari-mutuel pool and rounding rule: yes/no
 events, over/under events (stored with the same two sides: yes = over, no =
 under) and names events whose options are names (people, for example). The
-over/under and names functions sit in their own sections below.
+over/under and names functions sit in their own sections below, followed by
+the "Betting closes" choices of the New event form.
 
 Pure functions only: no Streamlit, no file access. Money is a Decimal with at
 most 2 decimal places (cents). Floats are never used for money.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Dict, List, Optional, Union
 
@@ -181,6 +182,9 @@ def _check_resolvable(event: Event, now: datetime) -> None:
         raise BettingError(f"Cannot resolve an event that is {event.status}.")
     if now < event.close_time:
         raise BettingError("Event cannot be resolved before its close time.")
+    if now < event.event_time:  # old events have event_time == close_time
+        when = event.event_time.astimezone(timezone.utc).strftime("%a %d %b, %H:%M UTC")
+        raise BettingError(f"You can set the result after the event date ({when}).")
 
 
 def _check_bets_belong(event: Event, bets: List[Bet], users: Dict[str, User]) -> None:
@@ -242,12 +246,12 @@ def resolve_event(
 ) -> Decimal:
     """Set the outcome, pay out every bet and mark the event resolved.
 
-    Only possible at or after the close time. Winners split the whole pool in
-    proportion to their stakes. If only one side has bets (so nobody backed the
-    winner, or nobody lost), every stake is refunded. Sets Bet.payout and
-    credits the users' balances. Returns the total paid out, which always
-    equals the pool. A resolved event is read-only, so resolving it again
-    raises BettingError. Names events are resolved with resolve_names_event.
+    Only possible after the close time and the event date. Winners split the
+    whole pool in proportion to their stakes. If only one side has bets (so
+    nobody backed the winner, or nobody lost), every stake is refunded. Sets
+    Bet.payout and credits the users' balances. Returns the total paid out,
+    which always equals the pool. A resolved event is read-only, so resolving
+    it again raises BettingError. Names events are resolved with resolve_names_event.
     Nothing changes on error.
     """
     if is_names_event(event):
@@ -470,3 +474,46 @@ def resolve_names_event(
     event.winners = chosen
     event.status = STATUS_RESOLVED
     return total_paid
+
+
+# --- when betting closes ----------------------------------------------------------
+
+CLOSE_AT_START = "At the event start"
+CLOSE_HOUR_BEFORE = "1 hour before"
+CLOSE_DAY_BEFORE = "1 day before"
+CLOSE_CUSTOM = "Custom"
+CLOSE_CHOICES = (CLOSE_AT_START, CLOSE_HOUR_BEFORE, CLOSE_DAY_BEFORE, CLOSE_CUSTOM)
+CLOSE_AFTER_EVENT = "Betting must close no later than the event date."
+
+
+def _check_aware(moment: datetime, name: str) -> None:
+    """Raise BettingError unless `moment` is a timezone-aware datetime."""
+    if not isinstance(moment, datetime) or moment.utcoffset() is None:
+        raise BettingError(f"{name} must be a timezone-aware date and time.")
+
+
+def close_time_for(event_time: datetime, choice: str, custom: Optional[datetime] = None) -> datetime:
+    """Return when betting closes for one of the CLOSE_CHOICES.
+
+    "1 hour before" is 60 minutes before the event date; "1 day before" is the
+    same clock time the day before. "Custom" uses `custom`, which must not be
+    after the event date. There is no "never": betting while the result is
+    already known would give free profits. Whether the time is still in the
+    future is checked when the event is created.
+    """
+    _check_aware(event_time, "Event date")
+    if choice == CLOSE_AT_START:
+        return event_time
+    if choice == CLOSE_HOUR_BEFORE:  # in UTC, so it is 60 minutes even when the clocks change
+        hour_before = event_time.astimezone(timezone.utc) - timedelta(hours=1)
+        return hour_before.astimezone(event_time.tzinfo)
+    if choice == CLOSE_DAY_BEFORE:
+        return event_time - timedelta(days=1)
+    if choice != CLOSE_CUSTOM:
+        raise BettingError("Choose when betting closes.")
+    if custom is None:
+        raise BettingError("Pick the day and hour when betting closes.")
+    _check_aware(custom, "Betting close time")
+    if custom > event_time:
+        raise BettingError(CLOSE_AFTER_EVENT)
+    return custom

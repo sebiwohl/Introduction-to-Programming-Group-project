@@ -5,7 +5,7 @@ storage.transaction(), so a user's balance and their bet are always saved
 together. Read-only functions use storage.load_data().
 
 All rule violations raise BettingError with a message the UI can show.
-Times passed in (`now`, `close_time`) must be timezone-aware.
+Times passed in (`now`, `close_time`, `event_time`) must be timezone-aware.
 
 Permissions come from auth.require_permission(). Accounts and groups live in
 auth.py; deleting events, flags and polls in moderation.py (refresh() ends due polls).
@@ -530,6 +530,7 @@ def create_event(
     options: Optional[List[str]] = None,
     multi_winner: bool = False,
     line=None,
+    event_time: Optional[datetime] = None,
 ) -> Event:
     """Create an event in the user's group and return it.
 
@@ -540,15 +541,25 @@ def create_event(
     ignoring case), and multi_winner says whether several can win. The names
     cannot change afterwards. The title is required, both texts are trimmed
     and length-limited, and the close time must be in the future.
+
+    event_time is when the event happens (betting.close_time_for works out the
+    close time from it). Betting must close no later than that, and the result
+    can only be set after it. Without it, the event happens when betting closes.
     """
     _require_aware(now, "now")
     _require_aware(close_time, "Close time")
+    if event_time is None:
+        event_time = close_time
+    _require_aware(event_time, "Event date")
     title = _clean_text(title, "Title", MAX_TITLE_LENGTH, required=True)
     description = _clean_text(
         description, "Description", MAX_DESCRIPTION_LENGTH, required=False
     )
+    if close_time > event_time:
+        raise BettingError(betting.CLOSE_AFTER_EVENT)
     if close_time <= now:
-        raise BettingError("Close time must be in the future.")
+        raise BettingError("Betting would already be closed: it must close in the future. "
+                           "Pick a later event date or another option.")
     if not isinstance(multi_winner, bool):
         raise BettingError("Choose one winner or several winners.")
     if multi_winner and options is None:
@@ -568,7 +579,7 @@ def create_event(
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
             title=title, description=description, close_time=close_time,
-            event_time=close_time, **names,
+            event_time=event_time, **names,
         )
         state.events[event.id] = event
         _pack(state, data)
@@ -624,7 +635,7 @@ def resolve_event(
     """Set the outcome, pay out and save everything together; return total paid.
 
     Only the event's creator or the group admin may resolve, and only at or
-    after the close time.
+    after the close time and the event date.
     """
     _require_aware(now, "now")
     with storage.transaction(path) as data:

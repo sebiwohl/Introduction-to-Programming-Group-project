@@ -37,6 +37,8 @@ KIND_CHOICES = ("Yes / No", "Names", "Over / Under")
 WINNER_CHOICES = ("One winner", "Several can win")
 SEVERAL_HELP = ("Several names can win. Everyone who backed a winning name shares the whole pool, "
                 "so a name's odds are the most it can pay: the more names win, the less each pays.")
+CLOSES_HELP = ("Betting always closes no later than the event date: betting while the result "
+               "is known would give free profits. The result can be set after the event date.")
 WIN_CHECK_SECONDS = 30  # while the Feed is open, look for a newly announced win this often
 LAST_LOAD_KEY = "feed_loaded_at"  # when the Feed last loaded fully (it then checked for wins itself)
 CONFETTI_PARAM = "confetti"  # add ?confetti to the address to see it on demand (for the demo)
@@ -105,12 +107,25 @@ def _my_result(records: List[BetRecord]) -> str:
     return f"you won {style.signed(paid - staked)}" if paid > staked else f"you lost {style.money(staked - paid)}"
 
 
-def _tags(summary: EventSummary, biggest: bool) -> str:
-    """Return the status pills and the time line at the top of an event."""
+def _result_due(event, now: datetime) -> bool:
+    """Return True once the event date has passed, so its result can be set."""
+    return now >= event.event_time
+
+
+def _tags(summary: EventSummary, biggest: bool, now: datetime) -> str:
+    """Return the status pills and the time line at the top of an event.
+
+    When the event happens after betting closes, the line shows both times.
+    """
     event = summary.event
     if event.status == STATUS_OPEN:
         pills = style.pill("Open", "open") + (style.pill("Biggest pool", "big") if biggest else "")
         meta = f"Closes {style.when(event.close_time)}"
+        if event.event_time != event.close_time:
+            meta += f" · Event {style.when(event.event_time)}"
+    elif event.status == STATUS_CLOSED and not _result_due(event, now):
+        pills = style.pill("Awaiting result", "waiting")
+        meta = f"Betting closed · result after {style.when(event.event_time)}"
     elif event.status == STATUS_CLOSED:
         pills, meta = style.pill("Awaiting result", "waiting"), f"Betting closed {style.when(event.close_time)}"
     elif event.status == STATUS_RESOLVED and betting.is_names_event(event):
@@ -144,12 +159,14 @@ def _mode_pill(event) -> str:
             f'{WINNER_CHOICES[1]}<span class="ci-help">?</span></span>')
 
 
-def _sub_line(user: User, summary: EventSummary, records: List[BetRecord]) -> str:
+def _sub_line(user: User, summary: EventSummary, records: List[BetRecord], now: datetime) -> str:
     """Return the grey line under the title: creator, who is in, pool, your part."""
     event = summary.event
     creator = "you" if event.creator_id == user.id else summary.creator_name
     pool = f"pool {style.money(summary.pool)}"
-    if event.status == STATUS_CLOSED:
+    if event.status == STATUS_CLOSED and not _result_due(event, now):  # the time line says when
+        parts = [f"Created by {creator}", _my_calls(user, summary), pool]
+    elif event.status == STATUS_CLOSED:
         waiting = ("Waiting for you to set the result" if event.creator_id == user.id
                    else f"Waiting for {summary.creator_name} (creator) or the admin to set the result")
         parts = [waiting, _my_calls(user, summary), pool]
@@ -167,7 +184,8 @@ def _ranked_options(summary: EventSummary) -> list:
     return sorted(summary.options, key=lambda option: -(option.share or 0))
 
 
-def _names_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool) -> str:
+def _names_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool,
+                now: datetime) -> str:
     """Return the top of a names event: pills, title, grey line and one row per option."""
     event = summary.event
     description = (f'<div class="ci-ev-desc">{style.esc(event.description)}</div>'
@@ -186,18 +204,19 @@ def _names_head(user: User, summary: EventSummary, records: List[BetRecord], big
         note = "No bets yet"
     note_line = f'<div class="ci-split"><span class="ci-split-mid">{note}</span></div>' if note else ""
     return (
-        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest)}'
+        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
-        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div></div>'
+        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div></div>'
         f'{note_line}<div class="ci-opts{look}">{rows}</div>'
     )
 
 
-def _event_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool) -> str:
+def _event_head(user: User, summary: EventSummary, records: List[BetRecord], biggest: bool,
+                now: datetime) -> str:
     """Return the top of an event item: pills, title, grey line, odds boxes and the bar."""
     event = summary.event
     if betting.is_names_event(event):
-        return _names_head(user, summary, records, biggest)
+        return _names_head(user, summary, records, biggest, now)
     settled = event.status != STATUS_OPEN
     winner = event.outcome if event.status == STATUS_RESOLVED else None
     description = (f'<div class="ci-ev-desc">{style.esc(event.description)}</div>'
@@ -205,9 +224,9 @@ def _event_head(user: User, summary: EventSummary, records: List[BetRecord], big
     middle = {STATUS_CLOSED: "Final odds · betting locked",
               STATUS_PAUSED: "Betting paused"}.get(event.status, "")
     return (
-        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest)}'
+        f'<div class="ci-ev"><div class="ci-ev-main">{_tags(summary, biggest, now)}'
         f'<div class="ci-ev-title">{style.esc(event.title)}</div>{description}'
-        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records))}</div></div>'
+        f'<div class="ci-ev-sub">{style.esc(_sub_line(user, summary, records, now))}</div></div>'
         f"{style.odds_boxes(summary.odds_yes, summary.odds_no, settled, winner, _labels(event))}"
         "</div>"
         + style.stake_bar(summary.stake_yes, summary.stake_no, middle,
@@ -537,7 +556,7 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
     event = summary.event
     prefix = "wait" if event.status == STATUS_CLOSED else "ev"
     with st.container(key=f"{prefix}_{event.id}"):
-        style.show(_event_head(user, summary, records, biggest))
+        style.show(_event_head(user, summary, records, biggest, now))
         names = betting.is_names_event(event)
         if event.status == STATUS_OPEN and names:
             _names_bet_form(user, summary)
@@ -545,7 +564,7 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
             _bet_form(user, summary, now)
         elif event.status == STATUS_PAUSED:
             _poll_panel(user, summary)
-        elif event.status == STATUS_CLOSED and _may_resolve(user, summary):
+        elif event.status == STATUS_CLOSED and _result_due(event, now) and _may_resolve(user, summary):
             if names:
                 _names_resolve_row(user, summary)
             elif betting.is_over_under(event):
@@ -764,49 +783,65 @@ def _typed_names(text: str) -> List[str]:
     return [line for line in (text or "").splitlines() if line.strip()]
 
 
+def _moment_fields(label: str, key: str, today: date, hour: time) -> datetime:
+    """Draw a day (tomorrow at first) and a Lisbon time side by side; return them as one moment."""
+    day_col, time_col = st.columns(2)
+    picked_day: date = day_col.date_input(label, min_value=today, value=today + timedelta(days=1),
+                                          key=f"{key}_day")
+    picked_time: time = time_col.time_input("At (Lisbon time)", value=hour, key=f"{key}_time")
+    return datetime.combine(picked_day, picked_time, tzinfo=style.APP_TIMEZONE)
+
+
 @st.dialog("New event")
 def new_event_dialog(user: User, now: datetime) -> None:
-    """Show the form that creates a new event in a pop-up: yes / no, names, or over / under."""
+    """Show the pop-up that creates a new event: yes / no, names, or over / under.
+
+    It has no st.form: a form only updates when it is sent, but the Custom
+    close time fields must appear as soon as Custom is picked. The dialog is a
+    fragment, so a click in it reruns only the pop-up. The keys keep what was
+    typed when the type changes.
+    """
     today = now.astimezone(style.APP_TIMEZONE).date()
     kind = st.radio("Type", KIND_CHOICES, horizontal=True, key="new_event_kind")
     names_event = kind == KIND_CHOICES[1]
     over_under = kind == KIND_CHOICES[2]
-    with st.form("create_event", border=False):
-        example = ("Who is going to show up late?" if names_event else
-                   "Goals in Sunday's derby" if over_under else "Will Ben finish the marathon?")
-        title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example,
-                              key="new_event_title")  # the key keeps the text when the type changes
-        description = st.text_area("Details (optional)", key="new_event_details",
-                                   max_chars=service.MAX_DESCRIPTION_LENGTH, height=80)
-        if names_event:
-            mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP)
-            picked = st.pills("Add group members", _member_names(user.id), selection_mode="multi",
-                              format_func=style.plain) or []
-            typed = st.text_area("Other names, one per line", height=90,
-                                 placeholder="People who are not in the app")
-            st.caption("2 to 10 names. They can't be changed after the event is created.")
-        if over_under:
-            line = st.number_input("Line", value=2.5, step=0.5, format="%.2f",
-                                   help="Members bet over or under this number. Choose a half "
-                                        "(like 2.5) to avoid a result exactly on the line, "
-                                        "which refunds everyone.")
-            st.caption("The line can't be changed after the event is created.")
-        date_col, time_col = st.columns(2)
-        day: date = date_col.date_input("Betting closes on", min_value=today,
-                                        value=today + timedelta(days=1))
-        clock: time = time_col.time_input("At (Lisbon time)", value=time(18, 0))
-        if st.form_submit_button("Create event", type="primary", width="stretch"):
-            closes = datetime.combine(day, clock, tzinfo=style.APP_TIMEZONE)
-            options = list(picked) + _typed_names(typed) if names_event else None
-            several = names_event and mode == WINNER_CHOICES[1]
-            line_value = Decimal(f"{line:.2f}") if over_under else None
-            if attempt(
-                lambda: service.create_event(user.id, title, closes, _now(), description,
-                                             options=options, multi_winner=several,
-                                             line=line_value),
-                "Event created.",
-            ):
-                st.rerun()
-            # Keep the dialog open so nothing typed is lost. The message can quote a typed
-            # name, so Markdown in it is escaped.
-            st.error(style.plain(st.session_state.pop(FLASH_KEY, ("error", ""))[1]))
+    example = ("Who is going to show up late?" if names_event else
+               "Goals in Sunday's derby" if over_under else "Will Ben finish the marathon?")
+    title = st.text_input("Question", max_chars=service.MAX_TITLE_LENGTH, placeholder=example,
+                          key="new_event_title")
+    description = st.text_area("Details (optional)", key="new_event_details",
+                               max_chars=service.MAX_DESCRIPTION_LENGTH, height=80)
+    if names_event:
+        mode = st.radio("Who can win", WINNER_CHOICES, horizontal=True, help=SEVERAL_HELP,
+                        key="new_event_mode")
+        picked = st.pills("Add group members", _member_names(user.id), selection_mode="multi",
+                          format_func=style.plain, key="new_event_members") or []
+        typed = st.text_area("Other names, one per line", height=90, key="new_event_names",
+                             placeholder="People who are not in the app")
+        st.caption("2 to 10 names. They can't be changed after the event is created.")
+    if over_under:
+        line = st.number_input("Line", value=2.5, step=0.5, format="%.2f", key="new_event_line",
+                               help="Members bet over or under this number. Choose a half "
+                                    "(like 2.5) to avoid a result exactly on the line, "
+                                    "which refunds everyone.")
+        st.caption("The line can't be changed after the event is created.")
+    event_time = _moment_fields("Event date", "new_event_date", today, time(18, 0))
+    choice = st.radio("Betting closes", betting.CLOSE_CHOICES, horizontal=True,
+                      key="new_event_closes", help=CLOSES_HELP)
+    custom = (_moment_fields("Betting closes on", "new_event_custom", today, time(17, 0))
+              if choice == betting.CLOSE_CUSTOM else None)
+    if st.button("Create event", type="primary", width="stretch", key="new_event_create"):
+        options = list(picked) + _typed_names(typed) if names_event else None
+        several = names_event and mode == WINNER_CHOICES[1]
+        line_value = Decimal(f"{line:.2f}") if over_under else None
+
+        def create() -> None:
+            closes = betting.close_time_for(event_time, choice, custom)
+            service.create_event(user.id, title, closes, _now(), description, options=options,
+                                 multi_winner=several, line=line_value, event_time=event_time)
+
+        if attempt(create, "Event created."):
+            st.rerun()
+        # Keep the dialog open so nothing typed is lost. The message can quote a typed
+        # name, so Markdown in it is escaped.
+        st.error(style.plain(st.session_state.pop(FLASH_KEY, ("error", ""))[1]))
