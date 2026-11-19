@@ -1,20 +1,19 @@
-"""Confetti: a short shower over the screen when the user's latest bet won,
-with the amount won in a small card in the middle ("YOU WON +15 COINS").
+"""Confetti: a short shower over the screen when the user has won, with the
+amount won in a small card in the middle ("YOU WON +15 COINS").
+
+Which wins get confetti (once each, when the result is announced) is decided
+in service.py; events.py shows it.
 
 Pure HTML and CSS (no JavaScript), built as one line so st.markdown passes it
 through. It sits on top of the page with pointer-events: none, so it never
 blocks a click, falls for a few seconds and then disappears. Viewers who ask
 their device for reduced motion get no confetti.
 
-No Streamlit here, so it can be tested on its own; events.py shows it.
+No Streamlit here, so it can be tested on its own.
 """
 
 import html
 import random
-from typing import Iterable, List, Optional
-
-from src import stats
-from src.service import BetRecord
 
 PIECES = 90
 LENGTH = 4.0  # seconds until the last piece has fallen and the layer is gone
@@ -81,15 +80,3 @@ def markup(won: str = "", seed: int = 7) -> str:
             "<small>COINS</small></div>") if won else ""
     return f'<style>{CSS}</style><div class="ci-confetti" aria-hidden="true">{card}{pieces}</div>'
 
-
-def win_to_celebrate(records: List[BetRecord], shown: Iterable[str]) -> Optional[str]:
-    """Return the id of the user's latest winning bet if it has no confetti yet, else None.
-
-    Records come newest event first (service._bet_history); refunds are skipped
-    and only a win counts (stats.latest_win). `shown` holds the bet ids that
-    already had their confetti in this session.
-    """
-    record = stats.latest_win(records)
-    if record is None or record.bet.id in set(shown):
-        return None
-    return record.bet.id

@@ -1,18 +1,7 @@
-"""Tests for src/ui/confetti.py: the confetti HTML and which win gets it."""
+"""Tests for src/ui/confetti.py: the confetti HTML (which wins get it: test_win_announcements.py)."""
 
 import re
-from decimal import Decimal
-
-from src.models import Bet
-from src.service import BetRecord
 from src.ui import confetti
-
-
-def record(bet_id, status="resolved", stake="10", payout=None):
-    """Return one of the user's bet records."""
-    bet = Bet(id=bet_id, event_id=f"e-{bet_id}", user_id="u1", side="yes", stake=Decimal(stake),
-              payout=None if payout is None else Decimal(payout))
-    return BetRecord(bet=bet, event_title="Event", event_status=status, outcome="yes")
 
 
 # --- the HTML -------------------------------------------------------------------
@@ -82,25 +71,3 @@ def test_amount_card_is_white_with_an_orange_amount():
     """The card must stand out on the black "You called it" banner as well as on the white page."""
     assert "background:#FFFFFF" in confetti.CSS
     assert f"color:{confetti.AMOUNT_COLOUR}" in confetti.CSS
-
-
-# --- which win gets confetti -------------------------------------------------------
-
-def test_latest_win_gets_confetti_once():
-    records = [record("b2", payout="25"), record("b1", payout="0")]
-    assert confetti.win_to_celebrate(records, set()) == "b2"
-    assert confetti.win_to_celebrate(records, {"b2"}) is None
-
-
-def test_no_confetti_when_the_latest_settled_bet_lost():
-    records = [record("b2", payout="0"), record("b1", payout="25")]
-    assert confetti.win_to_celebrate(records, set()) is None
-
-
-def test_refunds_and_open_bets_are_skipped():
-    records = [record("b3", status="open"), record("b2", payout="10"), record("b1", payout="30")]
-    assert confetti.win_to_celebrate(records, set()) == "b1"
-
-
-def test_no_bets_no_confetti():
-    assert confetti.win_to_celebrate([], set()) is None
