@@ -97,7 +97,7 @@ def _table(page: PageData, ordered: List[LeaderboardRow], member: Dict[str, Memb
             f"<td>{_hit_rate(stats_of)}</td><td>{_streak(stats_of)}</td>"
             f"<td><b>{style.odds_text(stats_of.best_odds)}</b></td></tr>"
         )
-    head = ("<tr><th>#</th><th>Member</th><th>Coins</th><th>This period</th><th>Hit rate</th>"
+    head = ("<tr><th>#</th><th>Member</th><th>Coins</th><th>Since last repayment</th><th>Hit rate</th>"
             "<th>Streak</th><th>Best call</th></tr>")
     return f'<div class="ci-table-wrap"><table class="ci-table">{head}{"".join(rows)}</table></div>'
 
@@ -185,6 +185,11 @@ def _records(page: PageData, member: Dict[str, MemberStats]) -> str:
 def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
     """Draw the Leaderboard page."""
     style.show(style.heading("Leaderboard", _kicker(page)))
+    period = st.radio("Period", stats.PERIODS, horizontal=True, key="leaderboard_period",
+                      label_visibility="collapsed",
+                      help="Since last repayment: hit rate, best call and streak count only "
+                           "events whose betting closed after the last repayment.")
+    member = stats.member_stats(stats.period_events(page.events, period, page.period_start))
     style.show(_podium(page, member))
     style.show('<div class="ci-label" style="margin-bottom:4px">Rank by</div>')
     style.tab_colors("tabs_rank", [RANK_ICONS[r][1] for r in stats.RANKINGS])
@@ -202,7 +207,7 @@ def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
 
 
 def _results_table(summary: balances.RepaymentSummary) -> str:
-    """Return the table of who is up and who is down this period."""
+    """Return the table of who is up and who is down since the last repayment."""
     rows = "".join(
         f"<tr><td>{style.esc(r.username)}</td><td>{style.money(r.received)}</td>"
         f"<td>{style.money(r.balance)}</td><td>{style.money(r.open_stake)}</td>"
@@ -232,7 +237,7 @@ def _repaid_form(page: PageData) -> None:
 
 def _repayment_window(page: PageData) -> None:
     """Draw the repayment window; opening and closing it changes nothing."""
-    with st.expander("Repayment: who owes whom this period"):
+    with st.expander("Repayment: who owes whom since last repayment"):
         try:
             summary = balances.repayment_summary(page.user.id, page.group.id)
         except (BettingError, StorageError) as error:

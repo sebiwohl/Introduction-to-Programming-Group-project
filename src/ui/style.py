@@ -118,6 +118,9 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-ev-title {font-size: 1.3rem; font-weight: 800; letter-spacing: -0.02em; margin: 6px 0 2px;
   color: var(--ci-ink); line-height: 1.25;}
 .ci-ev-desc {font-size: 0.9rem; margin: 2px 0;}
+.ci-countdown {display: inline-flex; align-items: center; gap: 4px; font-size: 0.78rem;
+  font-weight: 700; color: var(--ci-muted); margin: -2px 0 4px;}
+.ci-countdown-urgent {color: var(--ci-no);}
 .ci-ev-sub {font-size: 0.78rem; color: var(--ci-muted);}
 .ci-odds {display: flex; gap: 8px; flex: none;}
 .ci-odd {width: 66px; border-radius: 10px; padding: 6px 0 5px; text-align: center;

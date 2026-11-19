@@ -149,7 +149,7 @@ def _leave_form(page: PageData) -> None:
     """Draw the form to leave the group; the rules are checked in members.leave_group."""
     with st.form("leave_group"):
         style.show('<div class="ci-label">Leave the group</div>')
-        st.caption("Possible with no open bets and a result of 0 this period. "
+        st.caption("Possible with no open bets and a result of 0 since the last repayment. "
                    "The admin hands over the role first.")
         sure = st.checkbox("Yes, I want to leave")
         if st.form_submit_button("Leave group"):

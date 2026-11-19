@@ -8,6 +8,7 @@ from src import notifications, service
 from src.service import PageData
 from src.stats import MemberStats
 from src.ui import style
+from src.ui.account import GROUP_KEY
 from src.ui.actions import attempt
 
 BELL_SHOWN = 20  # the newest notifications listed in the bell
@@ -62,6 +63,21 @@ def _bell(page: PageData) -> None:
             st.rerun()
 
 
+def _group_switcher(page: PageData) -> None:
+    """Draw the group dropdown, only for users in more than one group.
+
+    Every page then shows the chosen group: its feed, balance and leaderboard.
+    """
+    if len(page.groups) < 2:
+        return
+    names = {group.id: group.name for group in page.groups}
+    st.session_state[GROUP_KEY] = page.group.id  # the group actually shown (it may have changed)
+    label_col, box_col, _ = st.columns([0.8, 2.6, 6], vertical_alignment="center")
+    style.show(where=label_col, markup='<div class="ci-label">Group</div>')
+    box_col.selectbox("Group", list(names), key=GROUP_KEY, format_func=names.get,
+                      label_visibility="collapsed")
+
+
 def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -> str:
     """Draw the top bar and return the page the user picked.
 
@@ -81,4 +97,5 @@ def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -
         if button_col.button("New event", key="new_event", type="primary",
                              icon=":material/add:", width="stretch"):
             on_new_event()
+        _group_switcher(page)
     return choice

@@ -9,6 +9,7 @@ from src.ui import style
 from src.ui.actions import attempt, show_flash
 
 USER_KEY = "user_id"
+GROUP_KEY = "group_id"  # the group the user is looking at (they can be in several)
 
 
 def _remember(user: User) -> None:
@@ -19,6 +20,7 @@ def _remember(user: User) -> None:
 def log_out() -> None:
     """Forget the logged-in user and show the log-in page."""
     st.session_state.pop(USER_KEY, None)
+    st.session_state.pop(GROUP_KEY, None)
     st.rerun()
 
 
@@ -66,8 +68,13 @@ def login_page() -> None:
             _signup_form()
 
 
-def _create_group_form(user: User) -> None:
-    """Draw the form that creates a group with the user as its admin."""
+def _switch_to(group) -> None:
+    """Show this group from now on (after creating or joining it)."""
+    st.session_state[GROUP_KEY] = group.id
+
+
+def create_group_form(user: User) -> None:
+    """Draw the form that creates a group with the user as its admin, then shows it."""
     with st.form("create_group"):
         st.subheader("Create a group")
         name = st.text_input("Group name", max_chars=auth.MAX_GROUP_NAME_LENGTH)
@@ -75,19 +82,19 @@ def _create_group_form(user: User) -> None:
                    "everyone at once in the Group tab.")
         if st.form_submit_button("Create group", type="primary"):
             attempt(
-                lambda: auth.create_group(user.id, name),
+                lambda: _switch_to(auth.create_group(user.id, name)),
                 "Group created. Share the invite code, then top up everyone.",
             )
             st.rerun()
 
 
-def _join_group_form(user: User) -> None:
-    """Draw the form that joins a group by invite code."""
+def join_group_form(user: User) -> None:
+    """Draw the form that joins a group by invite code, then shows it."""
     with st.form("join_group"):
         st.subheader("Join a group")
         code = st.text_input("Invite code", max_chars=20)
         if st.form_submit_button("Join group", type="primary"):
-            attempt(lambda: auth.join_group(user.id, code), "You joined the group.")
+            attempt(lambda: _switch_to(auth.join_group(user.id, code)), "You joined the group.")
             st.rerun()
 
 
@@ -102,8 +109,8 @@ def group_page(user: User) -> None:
     show_flash()
     left, right = st.columns(2, gap="large")
     with left:
-        _create_group_form(user)
+        create_group_form(user)
     with right:
-        _join_group_form(user)
+        join_group_form(user)
     if st.button("Log out"):
         log_out()
