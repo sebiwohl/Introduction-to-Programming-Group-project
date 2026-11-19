@@ -169,8 +169,8 @@ def test_last_member_admin_deletes_group_and_everything_in_it(path, group):
     event = service.create_event(anna, "Rain tomorrow", CLOSE, NOW, path=path)
     service.place_bet(ben, event.id, "yes", Decimal("10"), NOW, path)
     members.set_restricted(anna, friends.id, ben, True, NOW, path)
-    with storage.transaction(path) as data:  # ben leaves (leaving itself comes later)
-        data["memberships"] = [m for m in data["memberships"] if m["user_id"] != ben]
+    service.resolve_event(anna, event.id, "yes", CLOSE + timedelta(hours=1), path)  # refund
+    members.leave_group(ben, friends.id, CLOSE + timedelta(hours=1), path)
     members.delete_group(anna, friends.id, path)
     data = storage.load_data(path)
     for section in ("groups", "memberships", "events", "bets", "polls", "topups",

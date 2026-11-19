@@ -151,9 +151,10 @@ def test_low_balance_alert_after_a_bet_on_a_name(path, names):
 
 
 def test_deleting_the_group_removes_names_events_and_their_bets(path, names):
-    ids, group_id, _ = names
-    with storage.transaction(path) as data:  # others leave (leaving itself comes later)
-        data["memberships"] = [m for m in data["memberships"] if m["user_id"] == ids[0]]
+    ids, group_id, event = names
+    moderation.delete_event(ids[1], event.id, NOW, path)  # refunds, so everyone is settled
+    for user_id in ids[1:]:
+        members.leave_group(user_id, group_id, NOW, path)
     members.delete_group(ids[0], group_id, path)
     data = storage.load_data(path)
     assert (data["groups"], data["events"], data["bets"]) == ([], [], [])

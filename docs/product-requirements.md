@@ -80,7 +80,7 @@ Decided method: everyone starts at 0, with top-ups and repayments.
 - **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. An open stake is not lost yet, so it counts as the member's in the old period's result and moves into the new period with the bet (it is added to what they received in the new period). Its payout or refund lands in the new period. This way the results of every period add up to 0 and the transfers always match.
 - **Stats:** shown for "This period" (since the last repayment) and "All time".
 - **Result and debt:** a member's result this period is their balance plus their stakes on open bets, minus the top-ups they received this period. Below 0 they have debt, so they are down. Right after a repayment nobody has debt.
-- **Leaving:** possible at any time when the member has no debt and no open bets. Otherwise an error message says why.
+- **Leaving:** possible at any time when the member has no open bets and a result of exactly 0 this period (no debt and no winnings), the same rule as removal, so every repayment still adds up. Someone who is up or down leaves right after the next repayment. Otherwise an error message says why.
 - **Joining mid-period:** a member who joins later also starts at 0 and can bet only after the admin's next top-up, which every member gets.
 
 Methods considered and not chosen:
@@ -347,7 +347,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Rounding: 2 decimals, each share rounded down to the cent; leftover cents go to the winner with the biggest stake (on a tie, the bet placed first).
 - The creator may bet on their own event.
 - Admin leaving: same rules as any member, and the admin chooses the new admin first; the new admin is notified. The admin can also hand the role over at any time.
-- Leaving a group: at any time with no debt and no open bets; otherwise an error message.
+- Leaving a group: at any time with no open bets and a result of exactly 0 (no debt, no winnings), like removal; otherwise an error message. Leaving with winnings is not allowed, because the others' debts would then be owed to nobody.
 - Joining: every member, the admin included, joins with 0. The note "Top-up required before creating events" is shown until the admin tops up everyone at once; then betting starts. Members who join later also start at 0 and wait for the next top-up.
 - Top-ups: always the same amount for every member; no top-ups for single members.
 - Removing a member: only with no open bets and a result of exactly 0 (no debt, no winnings). If they still have open bets, the admin restricts their betting first; once their open bets are resolved, they are removed straight away if their result is 0, or after the next repayment if they have debt or winnings.

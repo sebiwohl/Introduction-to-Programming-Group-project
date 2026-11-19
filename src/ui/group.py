@@ -5,8 +5,10 @@ from decimal import Decimal
 
 import streamlit as st
 
-from src import balances
+from src import auth, balances, members
+from src.betting import BettingError
 from src.models import ROLE_ADMIN
+from src.storage import StorageError
 from src.service import PageData
 from src.ui import style
 from src.ui.account import log_out
@@ -69,11 +71,94 @@ def _top_up_form(page: PageData) -> None:
         st.caption("Every member gets the same amount, new members included.")
         amount = st.number_input("Coins for each member", min_value=1, value=100, step=50)
         if st.form_submit_button("Top up", type="primary"):
-            if attempt(lambda: balances.top_up(page.user.id, page.group.id,
-                                               Decimal(int(amount)),
-                                               datetime.now(timezone.utc)),
-                       f"Everyone got {int(amount)} coins."):
-                st.rerun()
+            attempt(lambda: balances.top_up(page.user.id, page.group.id, Decimal(int(amount)),
+                                             datetime.now(timezone.utc)),
+                    f"Everyone got {int(amount)} coins.")
+            st.rerun()  # shows the success or the error message
+
+
+ADMIN_ACTIONS = ("Restrict betting", "Lift restriction", "Remove from group", "Make admin")
+
+
+def _now() -> datetime:
+    """Return the current time with a timezone."""
+    return datetime.now(timezone.utc)
+
+
+def _run_admin_action(page: PageData, member: members.MemberInfo, action: str) -> None:
+    """Run the chosen admin action on the member; the rules are checked in the logic."""
+    me, group_id = page.user.id, page.group.id
+    steps = {
+        "Restrict betting": (lambda: members.set_restricted(me, group_id, member.user_id, True,
+                                                            _now()),
+                             f"{member.username} can only view now."),
+        "Lift restriction": (lambda: members.set_restricted(me, group_id, member.user_id, False,
+                                                            _now()),
+                             f"{member.username} can bet again."),
+        "Remove from group": (lambda: members.remove_member(me, group_id, member.user_id, _now()),
+                              f"{member.username} was removed."),
+        "Make admin": (lambda: auth.hand_over_admin(me, group_id, member.user_id, _now()),
+                       f"{member.username} is the admin now."),
+    }
+    action_fn, success = steps[action]
+    attempt(action_fn, success)
+    st.rerun()  # shows the success or the error message
+
+
+def _manage_members(page: PageData) -> None:
+    """Draw the admin's form to restrict, remove or promote a member, or delete the group."""
+    if page.user.role != ROLE_ADMIN:
+        return
+    try:
+        others = [m for m in members.group_members(page.user.id, page.group.id)
+                  if m.user_id != page.user.id]
+    except (BettingError, StorageError) as error:
+        st.error(str(error))
+        return
+    if not others:
+        _delete_group_form(page)
+        return
+    with st.form("manage_members"):
+        style.show('<div class="ci-label">Manage members</div>')
+        st.caption("Remove only works for members with no open bets and a result of 0 this "
+                   "period. Restrict someone first if they still have open bets.")
+        member = st.selectbox("Member", others, format_func=lambda m: m.username
+                              + (" (restricted)" if m.restricted else ""))
+        action = st.radio("Action", ADMIN_ACTIONS, horizontal=True)
+        if st.form_submit_button("Apply"):
+            _run_admin_action(page, member, action)
+
+
+def _delete_group_form(page: PageData) -> None:
+    """Draw the delete button the admin sees once they are the last member."""
+    with st.form("delete_group"):
+        style.show('<div class="ci-label">Delete the group</div>')
+        st.caption("You are the last member. Deleting removes the group and all its events "
+                   "for good.")
+        sure = st.checkbox("Yes, delete this group and everything in it")
+        if st.form_submit_button("Delete group"):
+            if not sure:
+                st.error("Tick the box to confirm.")
+            else:
+                attempt(lambda: members.delete_group(page.user.id, page.group.id),
+                        "The group was deleted.")
+                st.rerun()  # shows the success or the error message
+
+
+def _leave_form(page: PageData) -> None:
+    """Draw the form to leave the group; the rules are checked in members.leave_group."""
+    with st.form("leave_group"):
+        style.show('<div class="ci-label">Leave the group</div>')
+        st.caption("Possible with no open bets and a result of 0 this period. "
+                   "The admin hands over the role first.")
+        sure = st.checkbox("Yes, I want to leave")
+        if st.form_submit_button("Leave group"):
+            if not sure:
+                st.error("Tick the box to confirm.")
+            else:
+                attempt(lambda: members.leave_group(page.user.id, page.group.id, _now()),
+                        f"You left {page.group.name}.")
+                st.rerun()  # shows the success or the error message
 
 
 def _rules_card() -> str:
@@ -106,7 +191,9 @@ def group_page(page: PageData) -> None:
     style.show(where=left, markup=_members_card(page))
     with left:
         _top_up_form(page)
+        _manage_members(page)
     with right:
         _invite_card(page)
         style.show(_rules_card())
         _account_card(page)
+        _leave_form(page)

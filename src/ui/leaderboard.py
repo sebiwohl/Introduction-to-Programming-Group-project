@@ -223,10 +223,11 @@ def _repaid_form(page: PageData) -> None:
         if st.form_submit_button("Repaid", type="primary"):
             if not paid:
                 st.error("Tick the box once everyone has paid.")
-            elif attempt(lambda: balances.confirm_repaid(
+            else:
+                attempt(lambda: balances.confirm_repaid(
                     page.user.id, page.group.id, Decimal(int(amount)), datetime.now(timezone.utc)),
-                    f"Repaid. A new period started with {int(amount)} coins each."):
-                st.rerun()
+                    f"Repaid. A new period started with {int(amount)} coins each.")
+                st.rerun()  # shows the success or the error message
 
 
 def _repayment_window(page: PageData) -> None:
