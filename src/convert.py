@@ -17,7 +17,8 @@ from decimal import InvalidOperation
 from typing import Iterable, Optional
 
 from src.models import (
-    CENT, Bet, Event, Group, Membership, Notification, Poll, Repayment, TopUp, User,
+    CENT, TYPE_NAMES, Bet, Event, Group, Membership, Notification, Option, Poll, Repayment,
+    TopUp, User,
 )
 
 
@@ -178,8 +179,12 @@ def group_from_dict(data: dict) -> Group:
 # --- events, bets and polls ---------------------------------------------------
 
 def event_to_dict(event: Event) -> dict:
-    """Return an Event as a dict for storage."""
-    return {
+    """Return an Event as a dict for storage.
+
+    The names fields (options, multi_winner, winners) are written only for
+    names events, so other events are stored exactly as before they existed.
+    """
+    data = {
         "id": event.id, "group_id": event.group_id,
         "creator_id": event.creator_id, "title": event.title,
         "description": event.description,
@@ -190,10 +195,16 @@ def event_to_dict(event: Event) -> dict:
         "event_time": time_to_text(event.event_time),
         "result_value": _optional_text(event.result_value),
     }
+    if event.event_type == TYPE_NAMES:
+        data.update({
+            "options": [{"id": option.id, "name": option.name} for option in event.options],
+            "multi_winner": event.multi_winner, "winners": list(event.winners),
+        })
+    return data
 
 
 def event_from_dict(data: dict) -> Event:
-    """Return an Event from a stored dict."""
+    """Return an Event from a stored dict; the names fields default to empty."""
     return Event(
         id=data["id"], group_id=data["group_id"],
         creator_id=data["creator_id"], title=data["title"],
@@ -204,6 +215,9 @@ def event_from_dict(data: dict) -> Event:
         line=_optional_number(data["line"]),
         event_time=text_to_time(data["event_time"]),
         result_value=_optional_number(data["result_value"]),
+        options=[Option(id=o["id"], name=o["name"]) for o in data.get("options", [])],
+        multi_winner=data.get("multi_winner", False),
+        winners=list(data.get("winners", [])),
     )
 
 

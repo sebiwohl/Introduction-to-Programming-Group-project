@@ -27,6 +27,7 @@ from src.convert import (
     find_membership,
     group_from_dict,
     group_to_dict,
+    notification_to_dict,
     poll_from_dict,
     poll_to_dict,
     user_from_dict,
@@ -35,15 +36,19 @@ from src.convert import (
 )
 from src.models import (
     AVATARS,
+    TYPE_NAMES,
+    TYPE_YES_NO,
     SIDE_NO,
     SIDE_YES,
     STATUS_CLOSED,
     STATUS_DELETED,
     STATUS_OPEN,
     STATUS_PAUSED,
+    STATUS_RESOLVED,
     Bet,
     Event,
     Group,
+    Notification,
     Poll,
     User,
 )
@@ -64,11 +69,31 @@ class Bettor:
 
 
 @dataclass
+class OptionRow:
+    """One option of a names event with its live numbers.
+
+    odds is pool / stake on this option (None while nobody backed it); share is
+    the part of the pool on it, 0 to 1 (None while the pool is empty).
+    """
+
+    id: str
+    name: str
+    stake: Decimal
+    odds: Optional[float]
+    share: Optional[float]
+    my_stake: Decimal
+    won: bool = False
+
+
+@dataclass
 class EventSummary:
     """An event with the numbers the feed shows.
 
     creator_name and bettors are read-only extras for the feed: who created the
-    event and who backed which side (largest stake first).
+    event and who backed which side (largest stake first). A names event has
+    one OptionRow per option instead of the yes/no numbers (those stay 0 and
+    None), and once resolved, paid_odds is what each coin on a winning option
+    paid (None if every stake was refunded).
     """
 
     event: Event
@@ -80,16 +105,26 @@ class EventSummary:
     my_stake: Decimal
     creator_name: str = ""
     bettors: List[Bettor] = field(default_factory=list)
+    options: List[OptionRow] = field(default_factory=list)
+    paid_odds: Optional[float] = None
 
 
 @dataclass
 class BetRecord:
-    """One past or open bet of a user, with its event's title and result."""
+    """One past or open bet of a user, with its event's title and result.
+
+    event_type is the event's type; side_label is how the bet's side is shown
+    (YES, NO or an option's name); winner_label names the result once resolved
+    ('YES', or 'Marta and João').
+    """
 
     bet: Bet
     event_title: str
     event_status: str
     outcome: Optional[str]
+    side_label: str = ""
+    winner_label: str = ""
+    event_type: str = TYPE_YES_NO
 
 
 @dataclass
@@ -236,9 +271,40 @@ def _bettors(state: _State, bets: List[Bet]) -> List[Bettor]:
     return bettors
 
 
+def _option_rows(event: Event, bets: List[Bet], user: User, total: Decimal) -> List[OptionRow]:
+    """Return a names event's options with stake, odds, pool share and the user's stake."""
+    stakes = betting.stake_per_option(bets, event)
+    mine = {option_id: Decimal("0") for option_id in stakes}
+    for bet in bets:
+        if bet.user_id == user.id:
+            mine[bet.side] += bet.stake
+    return [
+        OptionRow(id=option.id, name=option.name, stake=stakes[option.id],
+                  odds=betting.odds_for(total, stakes[option.id]),
+                  share=betting.share_for(total, stakes[option.id]),
+                  my_stake=mine[option.id], won=option.id in event.winners)
+        for option in event.options
+    ]
+
+
+def _summarize_names(state: _State, event: Event, user: User, bets: List[Bet]) -> EventSummary:
+    """Return the feed numbers for a names event: one row per option."""
+    total = betting.pool(bets)
+    rows = _option_rows(event, bets, user, total)
+    paid = betting.paid_odds(bets, event.winners) if event.status == STATUS_RESOLVED else None
+    return EventSummary(
+        event=event, pool=total, stake_yes=Decimal("0"), stake_no=Decimal("0"),
+        odds_yes=None, odds_no=None, my_stake=sum((row.my_stake for row in rows), Decimal("0")),
+        creator_name=_username(state, event.creator_id), bettors=_bettors(state, bets),
+        options=rows, paid_odds=paid,
+    )
+
+
 def _summarize(state: _State, event: Event, user: User) -> EventSummary:
     """Return the feed numbers for one event."""
     bets = _bets_on(state, event.id)
+    if betting.is_names_event(event):
+        return _summarize_names(state, event, user, bets)
     stakes = betting.stake_per_side(bets)
     my_stake = sum((b.stake for b in bets if b.user_id == user.id), Decimal("0"))
     return EventSummary(
@@ -272,17 +338,37 @@ def _feed(state: _State, user: User) -> List[EventSummary]:
 
 def _bet_history(state: _State, user: User) -> List[BetRecord]:
     """Return the user's bets with their events' titles and results, newest event first."""
-    records = []
+    records, winners = [], {}
     for bet in state.bets:
         if bet.user_id != user.id:
             continue
         event = state.events[bet.event_id]
+        if event.id not in winners:
+            winners[event.id] = winner_label(event)
         records.append(BetRecord(
             bet=bet, event_title=event.title,
             event_status=event.status, outcome=event.outcome,
+            side_label=betting.side_label(event, bet.side),
+            winner_label=winners[event.id], event_type=event.event_type,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
+
+
+def join_names(names: List[str]) -> str:
+    """Return names as one phrase: 'Marta', 'Marta and João', 'Ana, Marta and João'."""
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def winner_label(event: Event) -> str:
+    """Return the result of a resolved event as text, like 'YES' or 'Marta and João'."""
+    if event.status != STATUS_RESOLVED:
+        return ""
+    if not betting.is_names_event(event):
+        return (event.outcome or "").upper()
+    return join_names([betting.side_label(event, option_id) for option_id in event.winners])
 
 
 def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
@@ -345,28 +431,43 @@ def get_user(user_id: str, path=None) -> User:
 
 
 @dataclass
+class NewWin:
+    """A win the user has not celebrated yet: its message id, the event and the coins won."""
+
+    notification_id: str
+    event_title: str
+    amount: Decimal
+
+
+@dataclass
 class PageData:
-    """Everything the main screens show, read from one load of the data."""
+    """Everything the main screens show, read from one load of the data.
+
+    new_wins are the user's wins announced since they last saw them (for the confetti).
+    """
 
     user: User
     group: Optional[Group]
     events: List[EventSummary]
     my_bets: List[BetRecord]
     leaderboard: List[LeaderboardRow]
+    new_wins: List[NewWin] = field(default_factory=list)
 
 
 def page_data(user_id: str, now: datetime, path=None) -> PageData:
     """Return the user, group, feed, own bets and leaderboard from a single load.
 
     The UI calls this once per page view instead of five separate functions, so
-    the database is read once per click. If an open event is past its close time,
-    it is closed and saved first (rare), and the data is read again.
+    the database is read once per click. If a poll has ended or an open event is
+    past its close time, that is saved first (rare), and the data is read again.
     """
     _require_aware(now, "now")
-    state = _load(path)
+    data = storage.load_data(path)
+    state = _unpack(data)
     if _needs_refresh(state, now):
         refresh(now, path)
-        state = _load(path)
+        data = storage.load_data(path)
+        state = _unpack(data)
     user = _get_user(state, user_id)
     return PageData(
         user=user,
@@ -374,6 +475,7 @@ def page_data(user_id: str, now: datetime, path=None) -> PageData:
         events=_feed(state, user),
         my_bets=_bet_history(state, user),
         leaderboard=_leaderboard(state, user),
+        new_wins=_new_wins(data, state, user.id),
     )
 
 
@@ -393,11 +495,16 @@ def create_event(
     now: datetime,
     description: str = "",
     path=None,
+    options: Optional[List[str]] = None,
+    multi_winner: bool = False,
 ) -> Event:
-    """Create a yes/no event in the user's group and return it.
+    """Create an event in the user's group and return it.
 
-    The title is required, both texts are trimmed and length-limited, and the
-    close time must be in the future.
+    Without options it is a yes/no event. With options it is a names event:
+    2 to 10 names (trimmed, not empty, at most 40 characters, no duplicates
+    ignoring case), and multi_winner says whether several can win. The names
+    cannot change afterwards. The title is required, both texts are trimmed
+    and length-limited, and the close time must be in the future.
     """
     _require_aware(now, "now")
     _require_aware(close_time, "Close time")
@@ -407,6 +514,14 @@ def create_event(
     )
     if close_time <= now:
         raise BettingError("Close time must be in the future.")
+    if not isinstance(multi_winner, bool):
+        raise BettingError("Choose one winner or several winners.")
+    if multi_winner and options is None:
+        raise BettingError("Several winners are only possible on a names event.")
+    names = {}
+    if options is not None:
+        names = {"event_type": TYPE_NAMES, "options": betting.make_options(options),
+                 "multi_winner": multi_winner}
     with storage.transaction(path) as data:
         state = _unpack(data)
         user = _get_user(state, user_id)
@@ -414,7 +529,7 @@ def create_event(
         event = Event(
             id=uuid.uuid4().hex, group_id=user.group_id, creator_id=user.id,
             title=title, description=description, close_time=close_time,
-            event_time=close_time,
+            event_time=close_time, **names,
         )
         state.events[event.id] = event
         _pack(state, data)
@@ -483,7 +598,41 @@ def resolve_event(
             event, _bets_on(state, event.id), outcome, state.users, now
         )
         _pack(state, data)
+        _announce_wins(data, event, _bets_on(state, event.id), now)
     return total
+
+
+def resolve_names_event(
+    user_id: str, event_id: str, winners: List[str], now: datetime, path=None
+) -> Decimal:
+    """Set the winning option(s) of a names event, pay out and save; return total paid.
+
+    Same permissions and timing as resolve_event. winners are option ids:
+    exactly one for a one-winner event, one or more when several can win.
+    """
+    _require_aware(now, "now")
+    with storage.transaction(path) as data:
+        state = _unpack(data)
+        _close_expired(state, now)
+        user = _get_user(state, user_id)
+        event = _get_event_for(state, user, event_id)
+        auth.require_permission(user, auth.RESOLVE_EVENT, event)
+        total = betting.resolve_names_event(
+            event, _bets_on(state, event.id), winners, state.users, now
+        )
+        _pack(state, data)
+        _announce_wins(data, event, _bets_on(state, event.id), now)
+    return total
+
+
+def group_member_names(user_id: str, path=None) -> List[str]:
+    """Return the usernames in the user's group, sorted by name (for quick names options)."""
+    state = _load(path)
+    user = _get_user(state, user_id)
+    if not user.group_id:
+        return []
+    names = [u.username for u in state.users.values() if u.group_id == user.group_id]
+    return sorted(names, key=str.casefold)
 
 
 def bet_history(user_id: str, path=None) -> List[BetRecord]:
@@ -514,3 +663,70 @@ def set_avatar(user_id: str, avatar: str, path=None) -> User:
         user.avatar = avatar
         _pack(state, data)
     return user
+
+
+# --- win announcements (for the confetti) ----------------------------------------
+#
+# When a result is set, every member who won coins on the event gets an unread
+# notification with the id "win:<event id>:<user id>". The Feed shows confetti
+# for unread ones and then marks them read, so each win is celebrated once, on
+# whatever device the winner uses next. Data saved before this has no such
+# notifications, so old wins never set off confetti.
+
+WIN_PREFIX = "win:"
+
+
+def _net_won(bets: List[Bet], user_id: str) -> Decimal:
+    """Return what the user's bets on one resolved event paid on top of their stakes."""
+    mine = [bet for bet in bets if bet.user_id == user_id]
+    return sum((bet.payout or Decimal("0")) - bet.stake for bet in mine) if mine else Decimal("0")
+
+
+def _announce_wins(data: dict, event: Event, bets: List[Bet], now: datetime) -> None:
+    """Add an unread "You called it" notification for each member who won coins on the event.
+
+    Refunds and members whose bets lost (or lost more than they won, when they
+    backed several sides) get none.
+    """
+    for user_id in dict.fromkeys(bet.user_id for bet in bets):
+        if _net_won(bets, user_id) > 0:
+            note = Notification(
+                id=f"{WIN_PREFIX}{event.id}:{user_id}", user_id=user_id, group_id=event.group_id,
+                text=f"You called it: “{event.title}”", created_at=now,
+            )
+            data["notifications"].append(notification_to_dict(note))
+
+
+def _unseen_win_notes(data: dict, user_id: str) -> List[dict]:
+    """Return the user's unread win notifications, oldest first."""
+    return [note for note in data["notifications"]
+            if note["user_id"] == user_id and not note["read"] and note["id"].startswith(WIN_PREFIX)]
+
+
+def _new_wins(data: dict, state: _State, user_id: str) -> List[NewWin]:
+    """Return the user's announced wins they have not seen yet, with the coins won."""
+    wins = []
+    for note in _unseen_win_notes(data, user_id):
+        event_id = note["id"][len(WIN_PREFIX):].rsplit(":", 1)[0]
+        event = state.events.get(event_id)
+        if event is not None:
+            wins.append(NewWin(notification_id=note["id"], event_title=event.title,
+                               amount=_net_won(_bets_on(state, event_id), user_id)))
+    return wins
+
+
+def has_new_win(user_id: str, path=None) -> bool:
+    """Return True if a result has made the user a winner they have not seen yet (one read)."""
+    return bool(_unseen_win_notes(storage.load_data(path), user_id))
+
+
+def mark_wins_seen(user_id: str, notification_ids: List[str], path=None) -> None:
+    """Mark the user's win notifications as read, so their confetti never plays again.
+
+    Only the user's own notifications change; unknown ids are ignored.
+    """
+    wanted = set(notification_ids)
+    with storage.transaction(path) as data:
+        for note in data["notifications"]:
+            if note["user_id"] == user_id and note["id"] in wanted:
+                note["read"] = True

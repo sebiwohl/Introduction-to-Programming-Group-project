@@ -10,6 +10,8 @@ from src.ui.account import log_out
 RULES = (
     "Odds come from the group: winners split the whole pool in proportion to their stakes.",
     "If only one side has bets, everyone gets their stake back.",
+    "Names events: everyone who backed a winning name shares the whole pool. "
+    "If nobody backed a winner, everyone gets their stake back.",
     "Betting stops at the close time. Then the creator or the admin sets the result.",
     "Coins are virtual. Nobody can bet more than their balance.",
 )

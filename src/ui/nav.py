@@ -13,6 +13,12 @@ PAGES = (FEED, MY_BETS, LEADERBOARD, GROUP, PROFILE)
 NAV_KEY = "nav"
 
 
+def page_key(page_name: str) -> str:
+    """Return the container key for a page, e.g. 'page_2'; each page fades in under its own key."""
+    index = PAGES.index(page_name) if page_name in PAGES else 0
+    return f"page_{index}"
+
+
 def go_to(page_name: str) -> None:
     """Switch to another page (use as a button's on_click, before the tabs are drawn)."""
     st.session_state[NAV_KEY] = page_name

@@ -13,10 +13,13 @@ from src.ui.account import log_out
 from src.ui.actions import attempt
 
 
-def _tile(label: str, value: str, note: str, extra: str = "") -> str:
-    """Return one stat tile: small label, big value, grey note underneath."""
-    return (f'<div class="ci-tile{extra}"><div class="ci-kicker">{label}</div>'
-            f'<div class="ci-big">{value}</div><div class="ci-muted">{note}</div></div>')
+def _tile(order: int, label: str, value: str, note: str, extra: str = "") -> str:
+    """Return one stat tile: small label, big rolling value, grey note underneath.
+
+    order (0, 1, 2 ...) staggers the tile's entrance and its rolling digits.
+    """
+    return (f'<div class="ci-tile{extra}" style="--t:{order}"><div class="ci-kicker">{label}</div>'
+            f'{style.big_number(value)}<div class="ci-muted">{note}</div></div>')
 
 
 EDITING_KEY = "editing_profile"
@@ -109,11 +112,11 @@ def _main_tiles(page: PageData, me: MemberStats, profile: ProfileStats,
         hit = f"{round(me.hit_rate * 100)}%"
         hit_note = f"{me.right} of {me.settled} settled calls right"
     return (
-        '<div class="ci-tiles">'
-        + _tile("Coins", style.money(page.user.balance), coins_note, " ci-tile-dark")
-        + _tile("Ranking", rank, rank_note, " ci-tile-warm")
-        + _tile("Bets placed", str(profile.bets), bets_note)
-        + _tile("Hit rate", hit, hit_note)
+        '<div class="ci-tiles ci-tiles-anim">'
+        + _tile(0, "Coins", style.money(page.user.balance), coins_note, " ci-tile-dark")
+        + _tile(1, "Ranking", rank, rank_note, " ci-tile-warm")
+        + _tile(2, "Bets placed", str(profile.bets), bets_note)
+        + _tile(3, "Hit rate", hit, hit_note)
         + "</div>"
     )
 
@@ -147,11 +150,11 @@ def _more_tiles(page: PageData, me: MemberStats, profile: ProfileStats) -> str:
     in_play = stats.in_play(page.my_bets)
     created = f"You created {_plural(profile.events_created, 'event')}"
     return (
-        '<div class="ci-tiles ci-tiles-more">'
-        + _tile("Total staked", style.money(profile.total_staked), staked_note)
-        + _tile("Biggest win", win, win_note)
-        + _tile("Best call", f'<span class="ci-yes">{style.odds_text(me.best_odds)}</span>', best_note)
-        + _tile("Streak", streak, streak_note)
+        '<div class="ci-tiles ci-tiles-more ci-tiles-anim">'
+        + _tile(4, "Total staked", style.money(profile.total_staked), staked_note)
+        + _tile(5, "Biggest win", win, win_note)
+        + _tile(6, "Best call", f'<span class="ci-yes">{style.odds_text(me.best_odds)}</span>', best_note)
+        + _tile(7, "Streak", streak, streak_note)
         + "</div>"
         + f'<div class="ci-muted">{style.money(in_play)} coins in play right now · {created}.</div>'
     )
