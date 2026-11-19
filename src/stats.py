@@ -37,6 +37,7 @@ OPEN = "open"
 PAUSED = "paused"
 
 CLOSING_SOON = timedelta(hours=24)
+COUNTDOWN_URGENT = timedelta(hours=3)  # the countdown turns red this close to the close (3.2)
 FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
 # An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).
 HOT_SHARE = 0.5
@@ -420,3 +421,33 @@ def profile_stats(records: List[BetRecord], summaries: List[EventSummary],
 def my_row(rows: List[LeaderboardRow], username: str) -> Optional[LeaderboardRow]:
     """Return the user's own leaderboard row, or None if they are not on it."""
     return next((r for r in rows if r.username == username), None)
+
+
+@dataclass
+class Countdown:
+    """The time left until betting closes, as the event card shows it."""
+
+    text: str
+    urgent: bool  # red: less than COUNTDOWN_URGENT left
+    closed: bool  # the close time has passed (the event closes at the next page load)
+
+
+def countdown(close_time: datetime, now: datetime) -> Countdown:
+    """Return the time left until close_time, like '2 d 4 h left' or '35 min left'.
+
+    Whole minutes are rounded up, so '1 min left' shows until the close. Less
+    than a day shows hours and minutes; a day or more shows days and hours.
+    """
+    left = close_time - now
+    if left <= timedelta(0):
+        return Countdown("Betting closed", urgent=True, closed=True)
+    minutes = math.ceil(left.total_seconds() / 60)
+    days, rest = divmod(minutes, 24 * 60)
+    hours, mins = divmod(rest, 60)
+    if days:
+        text = f"{days} d {hours} h left" if hours else f"{days} d left"
+    elif hours:
+        text = f"{hours} h {mins} min left" if mins else f"{hours} h left"
+    else:
+        text = f"{mins} min left"
+    return Countdown(text, urgent=left <= COUNTDOWN_URGENT, closed=False)

@@ -550,6 +550,22 @@ def _poll_panel(user: User, summary: EventSummary) -> None:
             st.rerun()
 
 
+COUNTDOWN_SECONDS = 60  # the countdown on open events updates this often (requirement 3.2)
+
+
+@st.fragment(run_every=COUNTDOWN_SECONDS)
+def _countdown(close_time: datetime) -> None:
+    """Show the time left until betting closes; red in the last 3 hours.
+
+    A fragment with its own timer: only this line is redrawn every minute, the
+    data is not reloaded. Once the time is up it says so; the event itself
+    closes at the next page load.
+    """
+    left = stats.countdown(close_time, _now())
+    kind = " ci-countdown-urgent" if left.urgent else ""
+    style.show(f'<div class="ci-countdown{kind}">⏱ {style.esc(left.text)}</div>')
+
+
 def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
                 now: datetime, biggest: bool) -> None:
     """Draw one event; one waiting for its result gets the dashed orange frame."""
@@ -557,6 +573,8 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
     prefix = "wait" if event.status == STATUS_CLOSED else "ev"
     with st.container(key=f"{prefix}_{event.id}"):
         style.show(_event_head(user, summary, records, biggest, now))
+        if event.status == STATUS_OPEN:
+            _countdown(event.close_time)
         names = betting.is_names_event(event)
         if event.status == STATUS_OPEN and names:
             _names_bet_form(user, summary)
