@@ -10,6 +10,8 @@
   votes cast deletes the event; a tie or no votes keeps it, clears the flags
   and reopens betting.
 - There is no timer: end_due_polls() runs when a page loads (service.refresh).
+- Every flag, poll and deletion goes into the group's activity log (the bell
+  of every member except whoever did it).
 
 All functions work on the stored dicts inside storage.transaction(), like
 members.py. Permissions come from auth.require_permission().
@@ -23,6 +25,7 @@ from typing import List, Optional
 from src import auth, storage
 from src.auth import AuthError
 from src.convert import event_from_dict, poll_to_dict, text_to_time
+from src.notifications import notify_group, quote
 from src.models import (
     STATUS_DELETED, STATUS_OPEN, STATUS_PAUSED, VOTE_DELETE, VOTE_KEEP, Poll,
 )
@@ -92,6 +95,16 @@ def _delete_and_refund(data: dict, event: dict) -> None:
                 balances[bet["user_id"]]["balance"] += bet["stake"]
 
 
+def _name(data: dict, user_id: str) -> str:
+    """Return a user's name."""
+    return next(u["username"] for u in data["users"] if u["id"] == user_id)
+
+
+def _log(data: dict, event: dict, text: str, now: datetime, skip=()) -> None:
+    """Add an entry to the activity log of the event's group."""
+    notify_group(data, event["group_id"], text, now, skip=skip)
+
+
 def _poll_end(now: datetime, close_time: datetime) -> datetime:
     """Return when a poll opened now ends: in 1 hour, or halfway to the close if sooner."""
     return min(now + POLL_LENGTH, now + (close_time - now) / 2)
@@ -133,6 +146,8 @@ def delete_event(user_id: str, event_id: str, now: datetime, path=None) -> None:
         if poll is not None:
             poll["result"] = RESULT_DELETED
         _delete_and_refund(data, event)
+        _log(data, event, f"{_name(data, user_id)} deleted {quote(event['title'])}. "
+             "Every stake was refunded.", now, skip=[user_id])
 
 
 # --- flags ----------------------------------------------------------------------
@@ -156,12 +171,18 @@ def flag_event(user_id: str, event_id: str, now: datetime, path=None) -> str:
         event["flags"].append(user_id)
         members = _unrestricted_members(data, event["group_id"])
         flags = len(members.intersection(event["flags"]))
+        title = quote(event["title"])
         if flags >= MIN_FLAGS and flags * 2 > len(members):
             _delete_and_refund(data, event)
+            _log(data, event, f"{title} was deleted: more than half of the members flagged it. "
+                 "Every stake was refunded.", now, skip=[user_id])
             return DELETED
         if flags >= poll_threshold(len(members)):
             _open_poll(data, event, AUTO_OPENER, now)
+            _log(data, event, f"Enough flags on {title}: betting is paused. "
+                 "Vote in the poll on the Feed.", now)
             return POLL_OPENED
+        _log(data, event, f"{_name(data, user_id)} flagged {title}.", now, skip=[user_id])
         return FLAGGED
 
 
@@ -173,7 +194,10 @@ def open_poll(admin_id: str, event_id: str, now: datetime, path=None) -> Poll:
         event = _find_event(data, event_id)
         _check(data, admin_id, event, auth.OPEN_POLL)
         _require_open(event, now, "get a poll")
-        return _open_poll(data, event, admin_id, now)
+        poll = _open_poll(data, event, admin_id, now)
+        _log(data, event, f"{_name(data, admin_id)} opened a poll on {quote(event['title'])}: "
+             "betting is paused. Vote on the Feed.", now, skip=[admin_id])
+        return poll
 
 
 def vote(user_id: str, event_id: str, choice: str, now: datetime, path=None) -> None:
@@ -208,12 +232,17 @@ def end_due_polls(data: dict, now: datetime) -> int:
             continue
         event = _find_event(data, poll["event_id"])
         deletes = sum(1 for choice in poll["votes"].values() if choice == VOTE_DELETE)
+        votes = f"{deletes} of {len(poll['votes'])} vote{'' if len(poll['votes']) == 1 else 's'}"
         if deletes * 2 > len(poll["votes"]):
             poll["result"] = RESULT_DELETED
             _delete_and_refund(data, event)
+            _log(data, event, f"The poll on {quote(event['title'])} ended: deleted ({votes} for "
+                 "delete). Every stake was refunded.", now)
         else:
             poll["result"] = RESULT_KEPT
             event["status"] = STATUS_OPEN
             event["flags"] = []
+            _log(data, event, f"The poll on {quote(event['title'])} ended: kept ({votes} for "
+                 "delete). Betting is open again.", now)
         ended += 1
     return ended

@@ -31,7 +31,7 @@ from src.convert import (
 from src.models import (
     CENT, ROLE_ADMIN, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, Repayment, TopUp,
 )
-from src.notifications import add_notification
+from src.notifications import add_notification, notify_group
 
 UNSETTLED = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
 
@@ -65,6 +65,8 @@ def top_up(admin_id: str, group_id: str, amount, now: datetime, path=None) -> To
             if membership["group_id"] == group_id:
                 membership["balance"] += cents
                 membership["received"] += cents
+        notify_group(data, group_id, f"{admin.username} topped up everyone with {amount} coins.",
+                     now, skip=[admin_id])
         return _record_top_up(data, group_id, amount, admin_id, now)
 
 

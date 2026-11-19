@@ -18,7 +18,7 @@ from src import auth, balances, storage
 from src.auth import AuthError
 from src.convert import cents_to_money
 from src.models import ROLE_ADMIN
-from src.notifications import add_notification
+from src.notifications import add_notification, notify_group
 
 # Records that point at their group directly.
 GROUP_SECTIONS = ("memberships", "topups", "repayments", "notifications")
@@ -110,7 +110,7 @@ def leave_group(user_id: str, group_id: str, now: datetime, path=None) -> None:
     """Leave the group when settled: no open bets and a result of exactly 0.
 
     The admin must hand over the role first; if they are the last member, they
-    delete the group instead. The admin is notified when someone leaves.
+    delete the group instead. The other members see it in their activity log.
     """
     with storage.transaction(path) as data:
         user = auth.user_in_group(data, user_id, group_id)
@@ -123,10 +123,7 @@ def leave_group(user_id: str, group_id: str, now: datetime, path=None) -> None:
         membership = _membership(data, user_id, group_id)
         _check_settled(data, membership, "You")
         data["memberships"].remove(membership)
-        for admin in others:
-            if admin["role"] == ROLE_ADMIN:
-                add_notification(data, admin["user_id"], group_id,
-                                 f"{user.username} left {_group_name(data, group_id)}.", now)
+        notify_group(data, group_id, f"{user.username} left {_group_name(data, group_id)}.", now)
 
 
 def remove_member(admin_id: str, group_id: str, member_id: str, now: datetime,
@@ -134,7 +131,7 @@ def remove_member(admin_id: str, group_id: str, member_id: str, now: datetime,
     """Let the admin remove a settled member (no open bets, result exactly 0).
 
     The admin cannot remove themselves (they leave instead). The removed
-    member is notified.
+    member is notified; the others see it in their activity log.
     """
     with storage.transaction(path) as data:
         admin = auth.user_in_group(data, admin_id, group_id)
@@ -147,6 +144,8 @@ def remove_member(admin_id: str, group_id: str, member_id: str, now: datetime,
         data["memberships"].remove(membership)
         add_notification(data, member_id, group_id,
                          f"The admin removed you from {_group_name(data, group_id)}.", now)
+        notify_group(data, group_id, f"{admin.username} removed {name} from "
+                     f"{_group_name(data, group_id)}.", now, skip=[admin_id])
 
 
 def delete_group(admin_id: str, group_id: str, path=None) -> None:

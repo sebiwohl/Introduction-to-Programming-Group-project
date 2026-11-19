@@ -17,7 +17,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, List, Optional
 
-from src import auth, balances, betting, moderation, storage
+from src import auth, balances, betting, moderation, notifications, storage
 from src.betting import BettingError
 from src.convert import (
     bet_from_dict,
@@ -468,6 +468,7 @@ class PageData:
     """Everything the main screens show, read from one load of the data.
 
     new_wins are the user's wins announced since they last saw them (for the confetti).
+    notifications are the user's own notifications, newest first (for the bell).
     """
 
     user: User
@@ -476,6 +477,7 @@ class PageData:
     my_bets: List[BetRecord]
     leaderboard: List[LeaderboardRow]
     new_wins: List[NewWin] = field(default_factory=list)
+    notifications: List[Notification] = field(default_factory=list)
 
 
 def page_data(user_id: str, now: datetime, path=None) -> PageData:
@@ -500,6 +502,7 @@ def page_data(user_id: str, now: datetime, path=None) -> PageData:
         my_bets=_bet_history(state, user),
         leaderboard=_leaderboard(state, user),
         new_wins=_new_wins(data, state, user.id),
+        notifications=notifications.user_notifications(data, user.id),
     )
 
 

@@ -1,12 +1,16 @@
-"""The top bar: logo, page tabs, streak and balance, and the New event button."""
+"""The top bar: logo, page tabs, streak and balance, the notification bell and New event."""
 
 from typing import Callable
 
 import streamlit as st
 
+from src import notifications, service
 from src.service import PageData
 from src.stats import MemberStats
 from src.ui import style
+from src.ui.actions import attempt
+
+BELL_SHOWN = 20  # the newest notifications listed in the bell
 
 FEED, MY_BETS, LEADERBOARD, GROUP, PROFILE = "Feed", "My bets", "Leaderboard", "Group", "Profile"
 PAGES = (FEED, MY_BETS, LEADERBOARD, GROUP, PROFILE)
@@ -34,20 +38,46 @@ def _top_stats(me: MemberStats, page: PageData) -> str:
     return f'<div class="ci-topstats">{streak}{coins}</div>'
 
 
+def _bell(page: PageData) -> None:
+    """Draw the bell: the unread count, the newest notifications and "Mark all as read"."""
+    unread = notifications.unread_count(page.notifications)
+    with st.popover(str(unread) if unread else " ", icon=":material/notifications:",
+                    help="Notifications"):
+        if not page.notifications:
+            st.caption("No notifications yet.")
+            return
+        lines = []
+        for note in page.notifications[:BELL_SHOWN]:
+            weight = "800" if not note.read else "400"
+            lines.append(
+                f'<div style="padding:6px 0;border-bottom:1px solid var(--ci-line)">'
+                f'<div style="font-weight:{weight}">{style.esc(note.text)}</div>'
+                f'<div class="ci-muted" style="font-size:.75rem">{style.when(note.created_at)}</div>'
+                "</div>"
+            )
+        style.show("".join(lines))
+        if unread and st.button("Mark all as read", key="bell_read_all"):
+            attempt(lambda: notifications.mark_all_read(page.user.id,
+                                                        skip_prefix=service.WIN_PREFIX))
+            st.rerun()
+
+
 def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -> str:
     """Draw the top bar and return the page the user picked.
 
     on_new_event runs when the New event button is pressed (it opens the dialog).
     """
     with st.container(key="topbar"):
-        logo_col, nav_col, stats_col, button_col = st.columns(
-            [1.4, 4.0, 1.1, 1.2], vertical_alignment="center"
+        logo_col, nav_col, stats_col, bell_col, button_col = st.columns(
+            [1.3, 3.6, 0.9, 0.6, 1.5], vertical_alignment="center"
         )
         style.show(where=logo_col, markup=style.logo())
         with nav_col:
             choice = st.radio("Menu", PAGES, horizontal=True, key=NAV_KEY,
                               label_visibility="collapsed")
         style.show(where=stats_col, markup=_top_stats(me, page))
+        with bell_col:
+            _bell(page)
         if button_col.button("New event", key="new_event", type="primary",
                              icon=":material/add:", width="stretch"):
             on_new_event()

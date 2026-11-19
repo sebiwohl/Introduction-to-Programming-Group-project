@@ -36,7 +36,15 @@ def group(path):
     friends = auth.create_group(anna, "Friends", path=path)
     auth.join_group(ben, friends.invite_code, path)
     balances.top_up(anna, friends.id, 500, NOW, path)
+    clear_notifications(path)  # the group's activity log noted the join and the top-up
     return anna, ben, carl, friends
+
+
+def clear_notifications(path):
+    """Start a test with no notifications (setting up the group logs joins and top-ups)."""
+    with storage.transaction(path) as data:
+        data["notifications"] = []
+
 
 
 def is_restricted(path, user_id, group_id):

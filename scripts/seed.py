@@ -61,7 +61,7 @@ def _users(password: str, path, now: datetime) -> dict:
     ids = {name: auth.sign_up(name, password, path).id for name in (ADMIN, MEMBER, *FRIENDS)}
     group = auth.create_group(ids[ADMIN], GROUP_NAME, path)
     for name in (MEMBER, *FRIENDS):
-        auth.join_group(ids[name], group.invite_code, path)
+        auth.join_group(ids[name], group.invite_code, path, now=now - timedelta(days=4, hours=1))
     balances.top_up(ids[ADMIN], group.id, FIRST_TOP_UP, now - timedelta(days=4), path)
     for name, animal in PICTURES.items():
         service.set_avatar(ids[name], animal, path)

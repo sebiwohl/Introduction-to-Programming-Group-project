@@ -35,7 +35,15 @@ def group(path):
     for name in ("ben", "carl"):
         auth.join_group(ids[name], friends.invite_code, path)
     balances.top_up(ids["anna"], friends.id, 100, NOW - timedelta(hours=1), path)
+    clear_notifications(path)  # the group's activity log noted the joins and the top-up
     return ids, friends.id
+
+
+def clear_notifications(path):
+    """Start a test with no notifications (setting up the group logs joins and top-ups)."""
+    with storage.transaction(path) as data:
+        data["notifications"] = []
+
 
 
 def in_group(path, user_id, group_id):

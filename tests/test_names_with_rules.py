@@ -146,7 +146,8 @@ def test_low_balance_alert_after_a_bet_on_a_name(path, names):
     ids, group_id, event = names
     balances.top_up(ids[0], group_id, 100, NOW, path)  # user3: 480 + 100 = 580, line 10
     service.place_bet(ids[3], event.id, event.options[1].id, Decimal("575"), NOW, path)
-    [note] = notifications.notifications_for(ids[0], path)
+    [note] = [n for n in notifications.notifications_for(ids[0], path)
+              if not notifications.is_activity(n)]  # personal ones, not the activity log
     assert note.text.startswith("user3 is running low in Friends")
 
 

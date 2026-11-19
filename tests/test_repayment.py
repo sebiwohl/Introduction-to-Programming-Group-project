@@ -168,7 +168,8 @@ def test_everyone_is_notified_of_the_new_period(path, group):
     ids, group_id = group
     balances.confirm_repaid(ids["anna"], group_id, 50, NOW, path)
     for name in ("anna", "ben", "carl"):
-        [note] = notifications.notifications_for(ids[name], path)
+        [note] = [n for n in notifications.notifications_for(ids[name], path)
+                  if not notifications.is_activity(n)]  # personal, not the activity log
         assert note.text == "Repaid: a new period started. Everyone got 50.00 coins."
 
 

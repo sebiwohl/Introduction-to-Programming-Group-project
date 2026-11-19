@@ -48,7 +48,8 @@ def balance(path, user_id, group_id):
 
 def notes(path, user_id):
     """Return the texts of the user's notifications, newest first."""
-    return [n.text for n in notifications.notifications_for(user_id, path)]
+    return [n.text for n in notifications.notifications_for(user_id, path)
+            if not notifications.is_activity(n)]  # personal ones, not the activity log
 
 
 # --- top-ups --------------------------------------------------------------------
@@ -195,8 +196,9 @@ def test_no_alert_without_any_top_up(path, group):
     _, _, _, dan, _ = group
     fresh = auth.create_group(dan, "Fresh", path=path)
     data = storage.load_data(path)
+    before = len(data["notifications"])  # the setup's activity log entries
     assert balances.notify_if_low(data, fresh.id, dan, Decimal("10"), NOW) is False
-    assert data["notifications"] == []
+    assert len(data["notifications"]) == before
 
 
 # --- received this period, result and debt (schema version 3) ---------------------

@@ -12,7 +12,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import List, Optional, Tuple
 
@@ -22,7 +22,7 @@ from src.convert import (
     find_membership, group_from_dict, group_to_dict, membership_from_dict, membership_to_dict,
     user_from_dict, user_to_dict,
 )
-from src.notifications import add_notification
+from src.notifications import add_notification, notify_group
 from src.models import ROLE_ADMIN, ROLE_MEMBER, Event, Group, Membership, User
 
 # Password hashing. The iteration count is stored inside each hash, so it can be
@@ -222,21 +222,25 @@ def create_group(user_id: str, name: str, path=None) -> Group:
     return group
 
 
-def join_group(user_id: str, invite_code: str, path=None) -> Group:
+def join_group(user_id: str, invite_code: str, path=None,
+               now: Optional[datetime] = None) -> Group:
     """Add the user to the group with this invite code as a member.
 
     The code ignores case and surrounding spaces. The new member starts at 0
     and gets coins with the admin's next top-up (requirements 2.4). The user
-    may already be in other groups, but not in this one.
+    may already be in other groups, but not in this one. The other members see
+    it in their activity log; now defaults to the current time.
     """
     code = invite_code.strip().upper() if isinstance(invite_code, str) else ""
     with storage.transaction(path) as data:
-        _find_user(data, user_id)
+        user = _find_user(data, user_id)
         group = next((g for g in data["groups"] if g["invite_code"] == code), None)
         if group is None:
             raise AuthError("No group has that invite code.")
         joined = group_from_dict(group)
         _add_membership(data, user_id, joined.id, ROLE_MEMBER)
+        notify_group(data, joined.id, f"{user['username']} joined {joined.name}.",
+                     now or datetime.now(timezone.utc), skip=[user_id])
     return joined
 
 
@@ -282,6 +286,9 @@ def hand_over_admin(
         group["admin_id"] = new_admin_id
         add_notification(data, new_admin_id, group_id,
                          f"You are now the admin of {group['name']}.", now)
+        names = {u["id"]: u["username"] for u in data["users"]}
+        notify_group(data, group_id, f"{names[admin_id]} handed the admin role to "
+                     f"{names[new_admin_id]}.", now, skip=[admin_id, new_admin_id])
 
 
 # --- permissions --------------------------------------------------------------
