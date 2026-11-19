@@ -28,13 +28,12 @@ def build_valid_data() -> dict[str, Any]:
     ]
     data["memberships"] = [
         {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin", "balance": 1000,
-         "restricted": False},
+         "restricted": False, "received": 1000},
         {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member", "balance": 990,
-         "restricted": False},
+         "restricted": False, "received": 1000},
     ]
     data["groups"] = [
-        {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC123",
-         "start_balance": 1000},
+        {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC123"},
     ]
     data["events"] = [
         {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Anna is late",
@@ -159,7 +158,7 @@ def test_missing_section_raises(path: Path, valid: dict[str, Any]) -> None:
 
 def test_wrong_schema_version_raises(path: Path, valid: dict[str, Any]) -> None:
     """A different schema_version raises StorageError."""
-    valid["schema_version"] = 3
+    valid["schema_version"] = 4
     path.parent.mkdir(parents=True)
     path.write_text(json.dumps(valid), encoding="utf-8")
     with pytest.raises(StorageError, match="schema_version"):
@@ -315,7 +314,9 @@ INVALID_CHANGES = {
     "negative balance": set_field("memberships", "m2", "balance", -1),
     "float balance": set_field("memberships", "m2", "balance", 10.0),
     "boolean balance": set_field("memberships", "m2", "balance", False),
-    "zero start balance": set_field("groups", "g1", "start_balance", 0),
+    "start balance is no longer allowed": set_field("groups", "g1", "start_balance", 1000),
+    "negative received": set_field("memberships", "m2", "received", -1),
+    "float received": set_field("memberships", "m2", "received", 10.0),
     "float payout": set_field("bets", "b3", "payout", 15.0),
     "unknown status": set_field("events", "e1", "status", "archived"),
     "bad side": set_field("bets", "b1", "side", "maybe"),
@@ -699,10 +700,11 @@ def test_transaction_on_missing_file_creates_it(path: Path) -> None:
     """The first transaction on a missing file writes the first file."""
     with storage.transaction(path) as data:
         data["groups"].append({"id": "g1", "name": "G", "admin_id": "u1",
-                               "invite_code": "X", "start_balance": 100})
+                               "invite_code": "X"})
         data["users"].append({"id": "u1", "username": "a", "password_hash": "h"})
         data["memberships"].append({"id": "m1", "user_id": "u1", "group_id": "g1",
-                                    "role": "admin", "balance": 100, "restricted": False})
+                                    "role": "admin", "balance": 100, "restricted": False,
+                                    "received": 100})
     assert path.exists()
 
 

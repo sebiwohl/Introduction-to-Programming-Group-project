@@ -136,6 +136,7 @@ def user_from_dict(data: dict, membership: Optional[dict] = None) -> User:
         user.role = membership["role"]
         user.balance = cents_to_money(membership["balance"])
         user.restricted = membership["restricted"]
+        user.received = cents_to_money(membership["received"])
     return user
 
 
@@ -146,6 +147,7 @@ def membership_to_dict(membership: Membership) -> dict:
         "group_id": membership.group_id, "role": membership.role,
         "balance": money_to_cents(membership.balance),
         "restricted": membership.restricted,
+        "received": money_to_cents(membership.received),
     }
 
 
@@ -154,7 +156,7 @@ def membership_from_dict(data: dict) -> Membership:
     return Membership(
         id=data["id"], user_id=data["user_id"], group_id=data["group_id"],
         role=data["role"], balance=cents_to_money(data["balance"]),
-        restricted=data["restricted"],
+        restricted=data["restricted"], received=cents_to_money(data["received"]),
     )
 
 
@@ -163,7 +165,6 @@ def group_to_dict(group: Group) -> dict:
     return {
         "id": group.id, "name": group.name, "admin_id": group.admin_id,
         "invite_code": group.invite_code,
-        "start_balance": money_to_cents(group.start_balance),
     }
 
 
@@ -172,7 +173,6 @@ def group_from_dict(data: dict) -> Group:
     return Group(
         id=data["id"], name=data["name"], admin_id=data["admin_id"],
         invite_code=data["invite_code"],
-        start_balance=cents_to_money(data["start_balance"]),
     )
 
 
@@ -319,6 +319,7 @@ def membership_dicts(users: Iterable[User]) -> list:
         membership_to_dict(Membership(
             id=membership_id(user.id, user.group_id), user_id=user.id,
             group_id=user.group_id, role=user.role, balance=user.balance,
+            restricted=user.restricted, received=user.received,
         ))
         for user in users if user.group_id
     ]

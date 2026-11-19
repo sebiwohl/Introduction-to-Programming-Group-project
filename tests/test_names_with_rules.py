@@ -39,9 +39,10 @@ def names(path):
     Returns (ids, group id, event).
     """
     ids = [auth.sign_up(f"user{i}", PASSWORD, path).id for i in range(4)]
-    group = auth.create_group(ids[0], "Friends", START, path)
+    group = auth.create_group(ids[0], "Friends", path=path)
     for user_id in ids[1:]:
         auth.join_group(user_id, group.invite_code, path)
+    balances.top_up(ids[0], group.id, START, NOW - timedelta(hours=1), path)
     event = service.create_event(ids[1], "Who is late tonight?", CLOSE, NOW, path=path,
                                  options=["Anna", "Ben", "Carl"])
     for user_id, option, stake in ((ids[1], 0, "30"), (ids[2], 1, "50"), (ids[3], 2, "20")):
@@ -145,14 +146,16 @@ def test_low_balance_alert_after_a_bet_on_a_name(path, names):
     ids, group_id, event = names
     balances.top_up(ids[0], group_id, 100, NOW, path)  # user3: 480 + 100 = 580, line 10
     service.place_bet(ids[3], event.id, event.options[1].id, Decimal("575"), NOW, path)
-    [note] = notifications.notifications_for(ids[0], path)
+    [note] = [n for n in notifications.notifications_for(ids[0], path)
+              if not notifications.is_activity(n)]  # personal ones, not the activity log
     assert note.text.startswith("user3 is running low in Friends")
 
 
 def test_deleting_the_group_removes_names_events_and_their_bets(path, names):
-    ids, group_id, _ = names
-    with storage.transaction(path) as data:  # others leave (leaving itself comes later)
-        data["memberships"] = [m for m in data["memberships"] if m["user_id"] == ids[0]]
+    ids, group_id, event = names
+    moderation.delete_event(ids[1], event.id, NOW, path)  # refunds, so everyone is settled
+    for user_id in ids[1:]:
+        members.leave_group(user_id, group_id, NOW, path)
     members.delete_group(ids[0], group_id, path)
     data = storage.load_data(path)
     assert (data["groups"], data["events"], data["bets"]) == ([], [], [])

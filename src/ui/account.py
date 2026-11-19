@@ -1,6 +1,5 @@
 """Screens before the feed: log in, sign up, and create or join a group."""
 
-from decimal import Decimal
 
 import streamlit as st
 
@@ -72,14 +71,12 @@ def _create_group_form(user: User) -> None:
     with st.form("create_group"):
         st.subheader("Create a group")
         name = st.text_input("Group name", max_chars=auth.MAX_GROUP_NAME_LENGTH)
-        start = st.number_input(
-            "Starting balance for every member",
-            min_value=1, value=int(auth.DEFAULT_START_BALANCE), step=100,
-        )
+        st.caption("Everyone starts at 0. Once your friends have joined, top up "
+                   "everyone at once in the Group tab.")
         if st.form_submit_button("Create group", type="primary"):
             attempt(
-                lambda: auth.create_group(user.id, name, Decimal(int(start))),
-                "Group created. Share the invite code with your friends.",
+                lambda: auth.create_group(user.id, name),
+                "Group created. Share the invite code, then top up everyone.",
             )
             st.rerun()
 

@@ -12,7 +12,7 @@ from typing import Dict, List, Optional
 
 import streamlit as st
 
-from src import auth, betting, service, stats
+from src import auth, betting, moderation, service, stats
 from src.betting import BettingError
 from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, STATUS_RESOLVED, User
 from src.service import BetRecord, EventSummary, PageData
@@ -53,13 +53,21 @@ def bets_by_event(records: List[BetRecord]) -> Dict[str, List[BetRecord]]:
     return grouped
 
 
-def _may_resolve(user: User, summary: EventSummary) -> bool:
-    """Return True if the shared permission check lets this user set the result."""
+def _may(user: User, action: str, summary: EventSummary) -> bool:
+    """Return True if the shared permission check lets this user do `action` on the event.
+
+    Only decides which buttons to show; every action is checked again where it happens.
+    """
     try:
-        auth.require_permission(user, auth.RESOLVE_EVENT, summary.event)
+        auth.require_permission(user, action, summary.event)
     except BettingError:
         return False
     return True
+
+
+def _may_resolve(user: User, summary: EventSummary) -> bool:
+    """Return True if the shared permission check lets this user set the result."""
+    return _may(user, auth.RESOLVE_EVENT, summary)
 
 
 def _members_in(summary: EventSummary) -> int:
@@ -339,18 +347,131 @@ def _names_resolve_row(user: User, summary: EventSummary) -> None:
         _confirm_result(user, event.id, event.title, picked, [labels[i] for i in picked])
 
 
+@st.dialog("Set the result")
+def _confirm_side_result(user: User, event_id: str, title: str, side: str) -> None:
+    """Ask 'Are you sure?' before a yes/no result is saved, as it cannot be undone."""
+    style.show(
+        f'<div style="font-weight:800;font-size:1.05rem">{style.esc(title)}</div>'
+        f'<p style="margin:10px 0 4px">Result: <b>{side.upper()}</b></p>'
+        '<p class="ci-muted">Are you sure? Resolving cannot be undone.</p>'
+    )
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="side_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Yes, set the result", key="side_confirm", type="primary",
+                          width="stretch"):
+        attempt(
+            lambda: service.resolve_event(user.id, event_id, side, _now()),
+            f"Result set to {side.upper()}. Winners are paid out.",
+        )
+        st.rerun()
+
+
 def _resolve_row(user: User, summary: EventSummary, now: datetime) -> None:
-    """Draw the two buttons that set the result of a closed event."""
+    """Draw the two buttons that set the result of a closed event (after 'Are you sure?')."""
     event = summary.event
     label_col, yes_col, no_col = st.columns([1.2, 1, 1], vertical_alignment="center")
     style.show(where=label_col, markup='<div class="ci-label">Set the result</div>')
     choices = ((yes_col, SIDE_YES, "YES happened"), (no_col, SIDE_NO, "NO, it didn't"))
     for column, side, label in choices:
         if column.button(label, key=f"{side}_result_{event.id}", width="stretch"):
-            attempt(
-                lambda: service.resolve_event(user.id, event.id, side, now),
-                f"Result set to {side.upper()}. Winners are paid out.",
-            )
+            _confirm_side_result(user, event.id, event.title, side)
+
+
+# --- flags, polls and deleting ----------------------------------------------------
+
+FLAG_MESSAGES = {
+    moderation.FLAGGED: "Flagged. If enough members flag it, betting pauses and the group votes.",
+    moderation.POLL_OPENED: "Enough flags: betting is paused and the group votes in a poll.",
+    moderation.DELETED: "Most members flagged it: the event is deleted and every stake refunded.",
+}
+
+
+def _can_delete(user: User, summary: EventSummary, now: datetime) -> bool:
+    """Return True if the user may delete the event now (creator or admin, before 3 h to close)."""
+    event = summary.event
+    return (event.status in (STATUS_OPEN, STATUS_PAUSED) and _may(user, auth.DELETE_EVENT, summary)
+            and now < event.close_time - moderation.DELETE_DEADLINE)
+
+
+@st.dialog("Delete this event?")
+def _confirm_delete(user: User, event_id: str, title: str) -> None:
+    """Ask before deleting, as it cannot be undone; every stake is refunded."""
+    style.show(f'<div style="font-weight:800;font-size:1.05rem">{style.esc(title)}</div>'
+               '<p class="ci-muted" style="margin-top:8px">Every stake is refunded. '
+               "This cannot be undone.</p>")
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="delete_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Yes, delete it", key="delete_confirm", type="primary", width="stretch"):
+        attempt(lambda: moderation.delete_event(user.id, event_id, _now()),
+                "Event deleted. Every stake was refunded.")
+        st.rerun()
+
+
+def _flag(user: User, event_id: str) -> None:
+    """Flag the event and say what happened (flagged, poll opened or deleted)."""
+    outcome = {}
+
+    def run() -> None:
+        outcome["result"] = moderation.flag_event(user.id, event_id, _now())
+
+    if attempt(run):
+        st.session_state[FLASH_KEY] = ("success", FLAG_MESSAGES[outcome["result"]])
+    st.rerun()
+
+
+def _moderation_row(user: User, summary: EventSummary, now: datetime) -> None:
+    """Draw the flag count and the Flag, Open poll and Delete buttons the user may use."""
+    event = summary.event
+    is_open = event.status == STATUS_OPEN
+    flagged = user.id in event.flags
+    show_flag = is_open and _may(user, auth.FLAG_EVENT, summary)
+    show_poll = is_open and _may(user, auth.OPEN_POLL, summary)
+    show_delete = _can_delete(user, summary, now)
+    if not (show_flag or show_poll or show_delete or event.flags):
+        return
+    note_col, flag_col, poll_col, delete_col = st.columns([1.6, 1, 1, 1],
+                                                          vertical_alignment="center")
+    count = len(event.flags)
+    note = f"{count} flag{'' if count == 1 else 's'}" if count else "Something fishy?"
+    style.show(where=note_col, markup=f'<div class="ci-muted" style="font-size:.8rem">{note}</div>')
+    if show_flag and flag_col.button("Flagged" if flagged else "Flag", key=f"flag_{event.id}",
+                                     disabled=flagged, width="stretch"):
+        _flag(user, event.id)
+    if show_poll and poll_col.button("Open poll", key=f"poll_{event.id}", width="stretch"):
+        attempt(lambda: moderation.open_poll(user.id, event.id, _now()),
+                "Poll opened: betting is paused while the group votes.")
+        st.rerun()
+    if show_delete and delete_col.button("Delete", key=f"delete_{event.id}", width="stretch"):
+        _confirm_delete(user, event.id, event.title)
+
+
+def _poll_panel(user: User, summary: EventSummary) -> None:
+    """Draw the poll on a paused event: when it ends, the votes so far and the vote buttons."""
+    poll, event = summary.poll, summary.event
+    if poll is None:
+        style.show('<div class="ci-muted">Betting is paused.</div>')
+        return
+    count = len(poll.votes)
+    style.show(
+        '<div class="ci-label">Poll: delete this event?</div>'
+        f'<div class="ci-muted" style="margin:4px 0 8px">Betting is paused until '
+        f"{style.when(poll.closes_at)}. {count} vote{'' if count == 1 else 's'} so far. "
+        "More than half of the votes for Delete removes it and refunds every stake; "
+        "a tie or no votes keeps it.</div>"
+    )
+    mine = poll.votes.get(user.id)
+    if mine:
+        style.show(f'<div class="ci-muted">You voted <b>{style.esc(mine)}</b>.</div>')
+        return
+    if not _may(user, auth.VOTE_POLL, summary):
+        return
+    delete_col, keep_col = st.columns(2)
+    for column, choice, label in ((delete_col, "delete", "Delete it"), (keep_col, "keep", "Keep it")):
+        if column.button(label, key=f"vote_{choice}_{event.id}", width="stretch"):
+            attempt(lambda: moderation.vote(user.id, event.id, choice, _now()),
+                    f"Vote saved: {choice}.")
             st.rerun()
 
 
@@ -366,11 +487,15 @@ def _event_item(user: User, summary: EventSummary, records: List[BetRecord],
             _names_bet_form(user, summary)
         elif event.status == STATUS_OPEN:
             _bet_form(user, summary, now)
+        elif event.status == STATUS_PAUSED:
+            _poll_panel(user, summary)
         elif event.status == STATUS_CLOSED and _may_resolve(user, summary):
             if names:
                 _names_resolve_row(user, summary)
             else:
                 _resolve_row(user, summary, now)
+        if event.status in (STATUS_OPEN, STATUS_PAUSED):
+            _moderation_row(user, summary, now)
         _bets_panel(user, summary)
 
 
@@ -545,6 +670,8 @@ def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
     style.show(style.heading(page.group.name, _feed_kicker(page.events)))
     left, right = st.columns([2.5, 1], gap="large")
     with left:
+        if page.user.balance <= 0:
+            st.info(auth.TOP_UP_REQUIRED + " The admin tops up everyone in the Group tab.")
         style.show(_confetti(page))
         st.session_state[LAST_LOAD_KEY] = clock.monotonic()
         _watch_for_wins(page.user.id)

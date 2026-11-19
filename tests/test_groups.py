@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, notifications, service, storage
+from src import auth, balances, notifications, service, storage
 from src.auth import AuthError
 
 NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
@@ -31,9 +31,24 @@ def group(path):
     anna = auth.sign_up("anna", PASSWORD, path).id
     ben = auth.sign_up("ben", PASSWORD, path).id
     carl = auth.sign_up("carl", PASSWORD, path).id
-    friends = auth.create_group(anna, "Friends", Decimal("500"), path)
+    friends = auth.create_group(anna, "Friends", path=path)
     auth.join_group(ben, friends.invite_code, path)
+    balances.top_up(anna, friends.id, 500, NOW, path)
+    clear_notifications(path)  # the group's activity log noted the join and the top-up
     return anna, ben, carl, friends
+
+
+def clear_notifications(path):
+    """Start a test with no notifications (setting up the group logs joins and top-ups)."""
+    with storage.transaction(path) as data:
+        data["notifications"] = []
+
+
+def topped_group(admin_id, name, amount, path):
+    """Create a group and top it up (only the admin is in it yet); return the group."""
+    group = auth.create_group(admin_id, name, path=path)
+    balances.top_up(admin_id, group.id, amount, NOW, path)
+    return group
 
 
 def roles(path, group_id):
@@ -51,7 +66,7 @@ def stored_admin_id(path, group_id):
 
 def test_user_can_create_a_second_group(path, group):
     anna, _, _, friends = group
-    work = auth.create_group(anna, "Work", Decimal("200"), path)
+    work = topped_group(anna, "Work", 200, path)
     pairs = auth.user_groups(anna, path)
     assert [(g.id, m.role, m.balance) for g, m in pairs] == [
         (friends.id, "admin", Decimal("500.00")), (work.id, "admin", Decimal("200.00"))]
@@ -59,11 +74,11 @@ def test_user_can_create_a_second_group(path, group):
 
 def test_user_can_join_a_second_group(path, group):
     anna, _, carl, friends = group
-    other = auth.create_group(carl, "Others", Decimal("300"), path)
+    other = topped_group(carl, "Others", 300, path)
     auth.join_group(anna, other.invite_code, path)
     pairs = {g.name: (m.role, m.balance) for g, m in auth.user_groups(anna, path)}
     assert pairs == {"Friends": ("admin", Decimal("500.00")),
-                     "Others": ("member", Decimal("300.00"))}
+                     "Others": ("member", Decimal("0.00"))}  # joined after the top-up
 
 
 def test_cannot_join_the_same_group_twice(path, group):
@@ -93,7 +108,7 @@ def test_user_groups_sorted_by_name(path, group):
 
 def test_balance_changes_stay_in_their_own_group(path, group):
     anna, _, _, friends = group
-    auth.create_group(anna, "Work", Decimal("200"), path)
+    topped_group(anna, "Work", 200, path)
     close = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
     event = service.create_event(anna, "Rain tomorrow", close, NOW, path=path)
     service.place_bet(anna, event.id, "yes", Decimal("50"), NOW, path)

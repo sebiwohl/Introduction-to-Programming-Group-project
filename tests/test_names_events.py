@@ -277,12 +277,11 @@ def stored_data(event, bets=()):
                      {"id": "u2", "username": "ben", "password_hash": "h"}]
     data["memberships"] = [
         {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin", "balance": 1000,
-         "restricted": False},
+         "restricted": False, "received": 1000},
         {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member", "balance": 1000,
-         "restricted": False},
+         "restricted": False, "received": 1000},
     ]
-    data["groups"] = [{"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC",
-                       "start_balance": 1000}]
+    data["groups"] = [{"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC"}]
     data["events"] = [event]
     data["bets"] = list(bets)
     return data
@@ -348,7 +347,7 @@ def test_old_schema_1_yes_no_event_still_loads_and_resolves_as_before(tmp_path):
     assert service.resolve_event("u1", "e1", "no", AFTER, path) == Decimal("50")
     assert service.get_user("u2", path).balance == Decimal("140")
     saved = storage.load_data(path)
-    assert saved["schema_version"] == 2 and saved["events"][0]["type"] == "yes_no"
+    assert saved["schema_version"] == storage.SCHEMA_VERSION and saved["events"][0]["type"] == "yes_no"
     assert "options" not in saved["events"][0] and saved["events"][0]["outcome"] == "no"
 
 

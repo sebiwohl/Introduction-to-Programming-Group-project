@@ -77,10 +77,10 @@ Decided method: everyone starts at 0, with top-ups and repayments.
 - **Top-up:** only the admin can top up, and chooses the amount each time. Every member of the group always gets the same amount, new members included. There are no top-ups for single members, so the differences between members stay the same.
 - **Repayment:** a window shows who is up and who is down compared with what they were given this period (all top-ups they received), with simplified transfers and a copy button for the group chat. Opening and closing the window changes nothing. The real repayment happens outside the app, so no real money goes through the app.
 - **Repaid:** only the admin can confirm it, in the repayment window, and must enter a top-up amount above 0 in the same step. All balances go back to 0, a new period starts, and everyone is topped up at once, so betting can continue.
-- **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. Their stakes were already taken from the old period's balance, and their payouts or refunds land in the new period.
+- **Open bets carry over:** bets on events that are not resolved yet stay in place when "Repaid" is confirmed. An open stake is not lost yet, so it counts as the member's in the old period's result and moves into the new period with the bet (it is added to what they received in the new period). Its payout or refund lands in the new period. This way the results of every period add up to 0 and the transfers always match.
 - **Stats:** shown for "This period" (since the last repayment) and "All time".
-- **Debt:** a member has debt when their balance is lower than the top-ups they received this period, so they are down. Right after a repayment nobody has debt.
-- **Leaving:** possible at any time when the member has no debt and no open bets. Otherwise an error message says why.
+- **Result and debt:** a member's result this period is their balance plus their stakes on open bets, minus the top-ups they received this period. Below 0 they have debt, so they are down. Right after a repayment nobody has debt.
+- **Leaving:** possible at any time when the member has no open bets and a result of exactly 0 this period (no debt and no winnings), the same rule as removal, so every repayment still adds up. Someone who is up or down leaves right after the next repayment. Otherwise an error message says why.
 - **Joining mid-period:** a member who joins later also starts at 0 and can bet only after the admin's next top-up, which every member gets.
 
 Methods considered and not chosen:
@@ -152,11 +152,15 @@ Data is kept in the JSON format below, loaded at start-up and saved after every 
 
 **Where it lives.** The deployed app runs on Streamlit Community Cloud, which erases local files on every reboot (confirmed with a hosting test on 2026-11-16). So when the `DATABASE_URL` environment variable is set, the data is stored in a Supabase (PostgreSQL) database instead: the whole data structure is one JSON row in the table `app_data`, and backups are rows in `app_data_backups` (the newest 20 of each kind are kept). Each change locks the row (`SELECT ... FOR UPDATE`), so two users saving at the same time cannot overwrite each other, and a failed change is rolled back. Both tables have row level security turned on, so Supabase's public web API cannot read them. Without `DATABASE_URL` (local development and tests) the JSON file described next is used.
 
-All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 2) next to the `users`, `memberships`, `groups`, `events`, `bets`, `polls`, `topups`, `repayments` and `notifications` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
+All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 3) next to the `users`, `memberships`, `groups`, `events`, `bets`, `polls`, `topups`, `repayments` and `notifications` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
 
 Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected. A user has at most one membership per group. An over/under event must have a line and a yes/no event must not; only over/under events have a result number; betting must close no later than the event date (`close_time` <= `event_time`). A names event (`"type": "names"`) has no line and no result number; it must have 2 to 10 valid options, every bet on it must name one of its option ids, its `outcome` stays null, and its `winners` are set exactly when it is resolved (only one unless several can win). The names fields (`options`, `multi_winner`, `winners`) are stored only on names events, so other events keep exactly the format above.
 
-**Older data.** Data saved with `schema_version` 1 (group, role and balance on the user) is upgraded when it is loaded (`src/migration.py`) and saved in the new format at the next change, so existing files, database rows and backups keep working without a separate step. Names events need no upgrade: they only add optional fields to version 2.
+**Older data.** Data saved in an older format is upgraded when it is loaded (`src/migration.py`), one version at a time, and saved in the new format at the next change, so existing files, database rows and backups keep working without a separate step.
+- Version 1 → 2: group, role and balance move from the user into a membership.
+- Version 2 → 3: groups lose `start_balance`, and each membership gets `received` = the group's old start balance plus every top-up recorded in the group (everyone had joined with the start balance).
+
+Names events need no upgrade: they only add optional fields to version 2.
 
 ### 4.2 Entities
 
@@ -179,6 +183,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | role       | member or admin                                    |
 | balance    | Current coins in this group                        |
 | restricted | true when the admin has restricted the member (2.2) |
+| received   | Coins given by top-ups this period, since the last repayment, plus the open stakes carried over at the last repayment (2.4). Result this period = balance + open stakes - received; below 0 means debt |
 
 **Group**
 
@@ -188,7 +193,8 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | name          | Group name                 |
 | admin_id      | The admin's user id        |
 | invite_code   | Code for joining           |
-| start_balance | Coins given to new members (until top-ups replace it, see 2.4) |
+
+There is no starting balance: members join with 0 and get coins from top-ups (2.4).
 
 **Event**
 
@@ -335,13 +341,13 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Starting balance: none; everyone starts at 0, also after each repayment.
 - Balances: start at 0, with top-ups and repayments (section 2.4).
 - Top-up amount: chosen by the admin each time.
-- Repaid: confirmed by the admin in the repayment window, together with a top-up amount above 0 (any amount; it does not need to cover open stakes, since stakes are taken when a bet is placed); balances go back to 0 and everyone is topped up in the same step. Open bets carry over into the new period.
+- Repaid: confirmed by the admin in the repayment window, together with a top-up amount above 0 (any amount; it does not need to cover open stakes, since stakes are taken when a bet is placed); balances go back to 0 and everyone is topped up in the same step. Open bets carry over into the new period, and their stakes count as not lost yet, so every period's results add up to 0. The admin ticks "Everyone has paid" before pressing "Repaid".
 - Creating events: blocked for each member whose balance is 0 (in a new group, everyone until the first top-up).
 - Low balance: below 10% of the last top-up amount; the admin is notified.
 - Rounding: 2 decimals, each share rounded down to the cent; leftover cents go to the winner with the biggest stake (on a tie, the bet placed first).
 - The creator may bet on their own event.
 - Admin leaving: same rules as any member, and the admin chooses the new admin first; the new admin is notified. The admin can also hand the role over at any time.
-- Leaving a group: at any time with no debt and no open bets; otherwise an error message.
+- Leaving a group: at any time with no open bets and a result of exactly 0 (no debt, no winnings), like removal; otherwise an error message. Leaving with winnings is not allowed, because the others' debts would then be owed to nobody.
 - Joining: every member, the admin included, joins with 0. The note "Top-up required before creating events" is shown until the admin tops up everyone at once; then betting starts. Members who join later also start at 0 and wait for the next top-up.
 - Top-ups: always the same amount for every member; no top-ups for single members.
 - Removing a member: only with no open bets and a result of exactly 0 (no debt, no winnings). If they still have open bets, the admin restricts their betting first; once their open bets are resolved, they are removed straight away if their result is 0, or after the next repayment if they have debt or winnings.

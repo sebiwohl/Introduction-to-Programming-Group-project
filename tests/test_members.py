@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, members, notifications, service, storage
+from src import auth, balances, members, notifications, service, storage
 from src.auth import AuthError
 from src.models import User
 
@@ -33,9 +33,18 @@ def group(path):
     anna = auth.sign_up("anna", PASSWORD, path).id
     ben = auth.sign_up("ben", PASSWORD, path).id
     carl = auth.sign_up("carl", PASSWORD, path).id
-    friends = auth.create_group(anna, "Friends", Decimal("500"), path)
+    friends = auth.create_group(anna, "Friends", path=path)
     auth.join_group(ben, friends.invite_code, path)
+    balances.top_up(anna, friends.id, 500, NOW, path)
+    clear_notifications(path)  # the group's activity log noted the join and the top-up
     return anna, ben, carl, friends
+
+
+def clear_notifications(path):
+    """Start a test with no notifications (setting up the group logs joins and top-ups)."""
+    with storage.transaction(path) as data:
+        data["notifications"] = []
+
 
 
 def is_restricted(path, user_id, group_id):
@@ -168,8 +177,8 @@ def test_last_member_admin_deletes_group_and_everything_in_it(path, group):
     event = service.create_event(anna, "Rain tomorrow", CLOSE, NOW, path=path)
     service.place_bet(ben, event.id, "yes", Decimal("10"), NOW, path)
     members.set_restricted(anna, friends.id, ben, True, NOW, path)
-    with storage.transaction(path) as data:  # ben leaves (leaving itself comes later)
-        data["memberships"] = [m for m in data["memberships"] if m["user_id"] != ben]
+    service.resolve_event(anna, event.id, "yes", CLOSE + timedelta(hours=1), path)  # refund
+    members.leave_group(ben, friends.id, CLOSE + timedelta(hours=1), path)
     members.delete_group(anna, friends.id, path)
     data = storage.load_data(path)
     for section in ("groups", "memberships", "events", "bets", "polls", "topups",
@@ -182,6 +191,7 @@ def test_deleting_one_group_keeps_the_others(path, group):
     anna, ben, carl, friends = group
     others = auth.create_group(carl, "Others", path=path)
     auth.join_group(ben, others.invite_code, path)
+    balances.top_up(carl, others.id, 100, NOW, path)
     kept = service.create_event(carl, "Kept event", CLOSE, NOW, path=path)
     solo = auth.create_group(anna, "Solo", path=path)
     members.delete_group(anna, solo.id, path)

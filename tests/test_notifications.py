@@ -27,7 +27,14 @@ def setup(tmp_path):
     ben = auth.sign_up("ben", PASSWORD, path).id
     group = auth.create_group(anna, "Friends", path=path)
     auth.join_group(ben, group.invite_code, path)
+    clear_notifications(path)  # the group's activity log noted the join
     return path, anna, ben, group.id
+
+
+def clear_notifications(path):
+    """Start a test with no notifications (setting up the group logs joins and top-ups)."""
+    with storage.transaction(path) as data:
+        data["notifications"] = []
 
 
 def add(path, user_id, group_id, text, now=NOW):
@@ -140,3 +147,28 @@ def test_mark_all_read_changes_only_own_unread(setup):
 def test_mark_all_read_with_nothing_unread_returns_zero(setup):
     path, anna, _, _ = setup
     assert notifications.mark_all_read(anna, path) == 0
+
+
+# --- the bell: page data and "Mark all as read" ------------------------------------
+
+def test_page_data_carries_own_notifications_newest_first(setup):
+    from src import service
+    path, anna, ben, group = setup
+    old = add(path, anna, group, "Old", NOW - timedelta(hours=1))
+    new = add(path, anna, group, "New", NOW)
+    add(path, ben, group, "For Ben")
+    page = service.page_data(anna, NOW, path)
+    assert [n.id for n in page.notifications] == [new.id, old.id]
+
+
+def test_mark_all_read_can_leave_unseen_wins_for_the_confetti(setup):
+    from src import service
+    path, anna, _, group = setup
+    add(path, anna, group, "Plain")
+    with storage.transaction(path) as data:
+        data["notifications"].append({"id": f"{service.WIN_PREFIX}e1:{anna}", "user_id": anna,
+                                      "group_id": group, "text": "You called it",
+                                      "created_at": NOW.isoformat(), "read": False})
+    assert notifications.mark_all_read(anna, path, skip_prefix=service.WIN_PREFIX) == 1
+    unread = [n.id for n in notifications.notifications_for(anna, path) if not n.read]
+    assert unread == [f"{service.WIN_PREFIX}e1:{anna}"]

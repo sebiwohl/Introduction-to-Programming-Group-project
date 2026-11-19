@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, members, moderation, service, storage
+from src import auth, balances, members, moderation, service, storage
 from src.auth import AuthError
 from src.models import Event, User
 
@@ -31,9 +31,10 @@ def path(tmp_path):
 def make_group(path, size):
     """Create a group of `size` members (u0 is the admin); return (ids, group id)."""
     ids = [auth.sign_up(f"user{i}", PASSWORD, path).id for i in range(size)]
-    group = auth.create_group(ids[0], "Friends", START, path)
+    group = auth.create_group(ids[0], "Friends", path=path)
     for user_id in ids[1:]:
         auth.join_group(user_id, group.invite_code, path)
+    balances.top_up(ids[0], group.id, START, NOW, path)
     return ids, group.id
 
 
@@ -353,3 +354,30 @@ def test_refresh_without_changes_saves_nothing(path, four):
     before = len(storage.list_backups(path))
     assert service.refresh(NOW, path) == 0
     assert len(storage.list_backups(path)) == before
+
+
+# --- what the feed card gets ------------------------------------------------------
+
+def feed_item(path, user_id, event_id, now=NOW):
+    """Return the feed summary of one event for the user."""
+    return next(s for s in service.page_data(user_id, now, path).events
+                if s.event.id == event_id)
+
+
+def test_feed_card_gets_the_running_poll_and_the_flags(path, four):
+    ids, _, event_id = four
+    moderation.flag_event(ids[2], event_id, NOW, path)
+    item = feed_item(path, ids[1], event_id)
+    assert (item.poll, item.event.flags) == (None, [ids[2]])
+    moderation.open_poll(ids[0], event_id, NOW, path)
+    moderation.vote(ids[3], event_id, "keep", NOW, path)
+    item = feed_item(path, ids[1], event_id)
+    assert item.event.status == "paused"
+    assert (item.poll.closes_at, item.poll.votes) == (NOW + timedelta(hours=1), {ids[3]: "keep"})
+
+
+def test_feed_card_has_no_poll_after_it_ended(path, four):
+    ids, _, event_id = four
+    moderation.open_poll(ids[0], event_id, NOW, path)
+    item = feed_item(path, ids[1], event_id, NOW + timedelta(hours=1))
+    assert (item.poll, item.event.status) == (None, "open")

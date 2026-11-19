@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src import auth, service, storage
+from src import auth, balances, service, storage
 
 TEST_URL = os.environ.get("TEST_DATABASE_URL")
 UNREACHABLE_URL = "postgresql://someone:secretpw@127.0.0.1:1/nothing"
@@ -26,13 +26,12 @@ def sample_data():
     ]
     data["memberships"] = [
         {"id": "m1", "user_id": "u1", "group_id": "g1", "role": "admin",
-         "balance": 100000, "restricted": False},
+         "balance": 100000, "restricted": False, "received": 100000},
         {"id": "m2", "user_id": "u2", "group_id": "g1", "role": "member",
-         "balance": 100000, "restricted": False},
+         "balance": 100000, "restricted": False, "received": 100000},
     ]
     data["groups"] = [
-        {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC234",
-         "start_balance": 100000},
+        {"id": "g1", "name": "Friends", "admin_id": "u1", "invite_code": "ABC234"},
     ]
     data["events"] = [
         {"id": "e1", "group_id": "g1", "creator_id": "u1", "title": "Rain on Saturday",
@@ -450,9 +449,10 @@ def test_app_works_end_to_end_on_database(db, monkeypatch):
     """Sign-up, group creation, an event and login all go through the database."""
     monkeypatch.setattr(auth, "HASH_ITERATIONS", 1000)
     user = auth.sign_up("Cleo", "password123")
-    auth.create_group(user.id, "Flatmates")
+    group = auth.create_group(user.id, "Flatmates")
     now = datetime(2026, 11, 16, 12, 0, tzinfo=timezone.utc)
     close = datetime(2026, 11, 20, 18, 0, tzinfo=timezone.utc)
+    balances.top_up(user.id, group.id, 100, now)  # members start at 0
     service.create_event(user.id, "Rain on Saturday", close, now)
     assert auth.log_in("cleo", "password123").id == user.id
     stored = storage.load_data()
@@ -497,8 +497,8 @@ def test_failed_transaction_leaves_connection_usable(db):
 # --- schema version 1 data in the database -------------------------------------
 
 @needs_db
-def test_version_1_row_is_upgraded_and_saved_as_version_2(db):
-    """An old row loads in the new format; the next save writes version 2 and backs up version 1."""
+def test_version_1_row_is_upgraded_and_saved_in_the_current_version(db):
+    """An old row loads in the new format; the next save writes it and backs up version 1."""
     from src.migration import upgrade
     from tests.test_migration import version_1_data
 
@@ -506,7 +506,8 @@ def test_version_1_row_is_upgraded_and_saved_as_version_2(db):
     assert storage.load_data() == upgrade(version_1_data())
     with storage.transaction():
         pass
-    assert run_sql("SELECT data->>'schema_version' FROM app_data") == [("2",)]
+    assert run_sql("SELECT data->>'schema_version' FROM app_data") == [
+        (str(storage.SCHEMA_VERSION),)]
     assert run_sql("SELECT data->>'schema_version' FROM app_data_backups") == [("1",)]
 
 
@@ -541,3 +542,17 @@ def test_names_event_round_trips_through_the_database(db):
                      "payout": None}]
     storage.save_data(data)
     assert storage.load_data() == data
+
+
+@needs_db
+def test_version_2_row_is_upgraded_and_saved_as_version_3(db):
+    """A version 2 row (start balance on the group) loads and saves as version 3."""
+    from src.migration import upgrade
+    from tests.test_migration import version_2_data
+
+    write_raw(version_2_data())
+    assert storage.load_data() == upgrade(version_2_data())
+    with storage.transaction():
+        pass
+    assert run_sql("SELECT data->>'schema_version' FROM app_data") == [("3",)]
+    assert run_sql("SELECT data->>'schema_version' FROM app_data_backups") == [("2",)]

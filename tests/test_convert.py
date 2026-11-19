@@ -47,8 +47,7 @@ def sample_records():
                 role="admin", balance=Decimal("987.50"))
     other = User(id="u2", username="Ben", password_hash="h", group_id="g1",
                  balance=Decimal("1012.50"))
-    group = Group(id="g1", name="Friends", admin_id="u1", invite_code="ABC123",
-                  start_balance=Decimal("1000"))
+    group = Group(id="g1", name="Friends", admin_id="u1", invite_code="ABC123")
     event = Event(id="e1", group_id="g1", creator_id="u1", title="Rain on Saturday",
                   close_time=CLOSE, status="resolved", outcome="no", flags=["u2"])
     bets = [
@@ -137,7 +136,7 @@ def test_records_round_trip():
 def test_stored_dicts_use_cents_and_iso_times():
     users, group, event, bets, poll = sample_records()
     assert membership_dicts(users)[0]["balance"] == 98750
-    assert group_to_dict(group)["start_balance"] == 100000
+    assert "start_balance" not in group_to_dict(group)  # members start at 0 (version 3)
     assert bet_to_dict(bets[1])["stake"] == 1250
     assert bet_to_dict(bets[1])["payout"] == 2500
     assert event_to_dict(event)["close_time"] == "2026-11-20T19:00:00+00:00"
