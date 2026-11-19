@@ -21,6 +21,7 @@ from src.ui.account import create_group_form, join_group_form, log_out
 from src.ui.actions import attempt
 
 STATS_GROUP_KEY = "profile_stats_group"  # the group the Profile stats are shown for
+PERIOD_KEY = "profile_stats_period"  # This period / All time for the Profile stats
 
 
 def _tile(order: int, label: str, value: str, note: str, extra: str = "") -> str:
@@ -171,26 +172,31 @@ def _more_tiles(page: PageData, me: MemberStats, profile: ProfileStats) -> str:
     )
 
 
-def _stats_group(page: PageData) -> PageData:
-    """Draw the group dropdown above the stats and return the page data for the chosen group.
+def _stats_choice(page: PageData) -> tuple:
+    """Draw the group dropdown and the period switch above the stats.
 
-    It starts on the group shown everywhere else; picking another one loads
-    that group's figures once (the rest of the app stays on its group).
+    Returns (page data for the chosen group, chosen period). The group starts
+    on the one shown everywhere else; picking another loads that group's
+    figures once (the rest of the app stays on its group).
     """
     names = {group.id: group.name for group in page.groups}
     if st.session_state.get(STATS_GROUP_KEY) not in names:
         st.session_state[STATS_GROUP_KEY] = page.group.id
-    label_col, box_col, _ = st.columns([1, 2.6, 5], vertical_alignment="center")
+    label_col, box_col, period_col = st.columns([1, 2.6, 5], vertical_alignment="center")
     style.show(where=label_col, markup='<div class="ci-label">Stats for</div>')
     chosen = box_col.selectbox("Stats for", list(names), key=STATS_GROUP_KEY,
                                format_func=names.get, label_visibility="collapsed")
+    period = period_col.radio("Period", stats.PERIODS, horizontal=True, key=PERIOD_KEY,
+                              label_visibility="collapsed",
+                              help="This period: since the last repayment. An event counts in "
+                                   "the period in which its betting closes.")
     if chosen == page.group.id:
-        return page
+        return page, period
     try:
-        return service.page_data(page.user.id, datetime.now(timezone.utc), group_id=chosen)
+        return service.page_data(page.user.id, datetime.now(timezone.utc), group_id=chosen), period
     except (BettingError, StorageError) as error:
         st.error(str(error))
-        return page
+        return page, period
 
 
 def _more_groups(page: PageData) -> None:
@@ -211,11 +217,13 @@ def profile_page(page: PageData, me: MemberStats) -> None:
     st.write("")
     _profile_card(page, stats.my_row(page.leaderboard, page.user.username))
     st.write("")
-    shown = _stats_group(page)
-    if shown is not page:
-        me = stats.member_stats(shown.events).get(shown.user.username, MemberStats())
-    # only this group's bets, so every tile (including coins in play) counts the same ones
-    shown = replace(shown, my_bets=[r for r in shown.my_bets if r.group_id == shown.group.id])
+    shown, period = _stats_choice(page)
+    # only this group's bets and the chosen period, so every tile counts the same ones
+    group_bets = [r for r in shown.my_bets if r.group_id == shown.group.id]
+    shown = replace(shown,
+                    my_bets=stats.period_records(group_bets, period, shown.period_start),
+                    events=stats.period_events(shown.events, period, shown.period_start))
+    me = stats.member_stats(shown.events).get(shown.user.username, MemberStats())
     row = stats.my_row(shown.leaderboard, shown.user.username)
     profile = stats.profile_stats(shown.my_bets, shown.events, shown.user.id)
     style.show(_main_tiles(shown, me, profile, row) + _more_tiles(shown, me, profile))

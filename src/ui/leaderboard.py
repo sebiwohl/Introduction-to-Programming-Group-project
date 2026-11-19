@@ -185,6 +185,11 @@ def _records(page: PageData, member: Dict[str, MemberStats]) -> str:
 def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
     """Draw the Leaderboard page."""
     style.show(style.heading("Leaderboard", _kicker(page)))
+    period = st.radio("Period", stats.PERIODS, horizontal=True, key="leaderboard_period",
+                      label_visibility="collapsed",
+                      help="This period: since the last repayment. Hit rate, best call and "
+                           "streak then count only events whose betting closed in it.")
+    member = stats.member_stats(stats.period_events(page.events, period, page.period_start))
     style.show(_podium(page, member))
     style.show('<div class="ci-label" style="margin-bottom:4px">Rank by</div>')
     style.tab_colors("tabs_rank", [RANK_ICONS[r][1] for r in stats.RANKINGS])

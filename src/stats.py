@@ -451,3 +451,36 @@ def countdown(close_time: datetime, now: datetime) -> Countdown:
     else:
         text = f"{mins} min left"
     return Countdown(text, urgent=left <= COUNTDOWN_URGENT, closed=False)
+
+
+# --- This period / All time ------------------------------------------------------
+
+THIS_PERIOD = "This period"
+ALL_TIME = "All time"
+PERIODS = (THIS_PERIOD, ALL_TIME)
+
+
+def in_period(close_time: Optional[datetime], period_start: Optional[datetime]) -> bool:
+    """Return True if an event closing at close_time counts in the current period.
+
+    An event counts in the period in which its betting closes (open bets carry
+    over at a repayment, and so do their events). Before the first repayment
+    (period_start None) everything is in the period.
+    """
+    return period_start is None or close_time is None or close_time >= period_start
+
+
+def period_events(summaries: List[EventSummary], period: str,
+                  period_start: Optional[datetime]) -> List[EventSummary]:
+    """Return the events counted for the chosen period (all of them for All time)."""
+    if period == ALL_TIME:
+        return summaries
+    return [s for s in summaries if in_period(s.event.close_time, period_start)]
+
+
+def period_records(records: List[BetRecord], period: str,
+                   period_start: Optional[datetime]) -> List[BetRecord]:
+    """Return the bets counted for the chosen period (all of them for All time)."""
+    if period == ALL_TIME:
+        return records
+    return [r for r in records if in_period(r.close_time, period_start)]

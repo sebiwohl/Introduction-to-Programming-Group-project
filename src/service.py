@@ -33,6 +33,7 @@ from src.convert import (
     user_from_dict,
     user_to_dict,
     money_to_cents,
+    text_to_time,
 )
 from src.models import (
     AVATARS,
@@ -130,6 +131,7 @@ class BetRecord:
     winner_label: str = ""
     event_type: str = TYPE_YES_NO
     group_id: str = ""
+    close_time: Optional[datetime] = None  # decides the period the bet counts in
 
 
 @dataclass
@@ -388,7 +390,7 @@ def _bet_history(state: _State, user: User) -> List[BetRecord]:
             event_status=event.status, outcome=event.outcome,
             side_label=betting.side_label(event, bet.side),
             winner_label=winners[event.id], event_type=event.event_type,
-            group_id=event.group_id,
+            group_id=event.group_id, close_time=event.close_time,
         ))
     records.sort(key=lambda r: state.events[r.bet.event_id].close_time, reverse=True)
     return records
@@ -504,6 +506,9 @@ class PageData:
 
     new_wins are the user's wins announced since they last saw them (for the confetti).
     notifications are the user's own notifications, newest first (for the bell).
+    period_start is when the group's current period began (its last repayment),
+    or None before the first one; stats for "This period" count events whose
+    betting closes from then on.
     """
 
     user: User
@@ -514,6 +519,13 @@ class PageData:
     new_wins: List[NewWin] = field(default_factory=list)
     notifications: List[Notification] = field(default_factory=list)
     groups: List[Group] = field(default_factory=list)
+    period_start: Optional[datetime] = None
+
+
+def _period_start(data: dict, group_id: Optional[str]) -> Optional[datetime]:
+    """Return when the group's last repayment was confirmed, or None if there was none."""
+    times = [text_to_time(r["created_at"]) for r in data["repayments"] if r["group_id"] == group_id]
+    return max(times, default=None)
 
 
 def page_data(user_id: str, now: datetime, path=None,
@@ -546,6 +558,7 @@ def page_data(user_id: str, now: datetime, path=None,
         leaderboard=_leaderboard(state, user),
         new_wins=_new_wins(data, state, user.id),
         notifications=notifications.user_notifications(data, user.id),
+        period_start=_period_start(data, user.group_id),
     )
 
 
