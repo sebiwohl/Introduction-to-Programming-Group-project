@@ -5,14 +5,18 @@ returns (event summaries, the user's bet records, leaderboard rows) and compute
 hit rates, best calls, streaks, filters and rankings for display.
 
 A "call" is one member's stake on one side of a resolved event. Refunded calls
-(only one side had bets) count neither as right nor as wrong.
+(only one side had bets) count neither as right nor as wrong. On a names event
+a call is a stake on one option; it is refunded when nobody backed a winning
+option, or when every stake was on a winning option (everyone got it back).
 """
 
+import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
 from typing import Dict, List, Optional
 
+from src import betting
 from src.models import (
     CENT,
     SIDE_NO,
@@ -33,7 +37,10 @@ OPEN = "open"
 PAUSED = "paused"
 
 CLOSING_SOON = timedelta(hours=24)
-FEED_FILTERS = ("All", "Open", "Closing soon", "Awaiting result", "Done")
+FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
+# An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).
+HOT_SHARE = 0.5
+HOT_MIN_BETTORS = 2
 RANKINGS = ("Coins", "Hit rate", "Best call", "Streak")
 UNSETTLED = (STATUS_OPEN, STATUS_PAUSED, STATUS_CLOSED)
 
@@ -65,6 +72,31 @@ def call_result(side: str, outcome: str, stake_yes: Decimal, stake_no: Decimal) 
     if stake_yes == 0 or stake_no == 0:
         return REFUNDED
     return WON if side == outcome else LOST
+
+
+def _is_names(summary: EventSummary) -> bool:
+    """Return True if the summary is of a names event."""
+    return betting.is_names_event(summary.event)
+
+
+def _side_stake(summary: EventSummary, side: str) -> Decimal:
+    """Return the total stake on one side, or on one option of a names event."""
+    if _is_names(summary):
+        return next((o.stake for o in summary.options if o.id == side), Decimal("0"))
+    return summary.stake_yes if side == SIDE_YES else summary.stake_no
+
+
+def names_call_result(side: str, summary: EventSummary) -> str:
+    """Return WON, LOST or REFUNDED for a stake on one option of a resolved names event.
+
+    Refunded when nobody backed a winning option, or when all the stakes were
+    on winning options (then everyone just got their stake back).
+    """
+    winners = set(summary.event.winners)
+    winning = sum((o.stake for o in summary.options if o.id in winners), Decimal("0"))
+    if winning == 0 or winning == summary.pool:
+        return REFUNDED
+    return WON if side in winners else LOST
 
 
 def bet_result(record: BetRecord) -> str:
@@ -114,9 +146,15 @@ def member_stats(summaries: List[EventSummary]) -> Dict[str, MemberStats]:
     stats: Dict[str, MemberStats] = {}
     for summary in resolved:
         outcome = summary.event.outcome
-        odds = summary.odds_yes if outcome == SIDE_YES else summary.odds_no
+        if _is_names(summary):
+            odds = summary.paid_odds
+        else:
+            odds = summary.odds_yes if outcome == SIDE_YES else summary.odds_no
         for bettor in summary.bettors:
-            result = call_result(bettor.side, outcome, summary.stake_yes, summary.stake_no)
+            if _is_names(summary):
+                result = names_call_result(bettor.side, summary)
+            else:
+                result = call_result(bettor.side, outcome, summary.stake_yes, summary.stake_no)
             if result == REFUNDED:
                 continue
             _add_call(stats.setdefault(bettor.username, MemberStats()),
@@ -125,7 +163,16 @@ def member_stats(summaries: List[EventSummary]) -> Dict[str, MemberStats]:
 
 
 def side_odds(summary: EventSummary, side: str) -> Optional[float]:
-    """Return the odds of one side of an event (None if nobody backed it)."""
+    """Return the odds of one side of an event (None if nobody backed it).
+
+    On a names event this is the option's odds; for a winning option of a
+    resolved event it is what was actually paid (with several winners that
+    can be less than the option's own odds).
+    """
+    if _is_names(summary):
+        if summary.event.status == STATUS_RESOLVED and side in summary.event.winners:
+            return summary.paid_odds
+        return next((o.odds for o in summary.options if o.id == side), None)
     return summary.odds_yes if side == SIDE_YES else summary.odds_no
 
 
@@ -133,13 +180,28 @@ def estimated_profit(stake: Decimal, summary: EventSummary, side: str) -> Option
     """Return what a stake on `side` would win on top of itself at today's odds.
 
     stake x pool / stake on that side, minus the stake, rounded down to the cent.
-    None if nobody backed that side. Only an estimate while betting is open.
+    None if nobody backed that side. Only an estimate while betting is open
+    (on a names event where several can win, it is the most it could win).
     """
-    side_stake = summary.stake_yes if side == SIDE_YES else summary.stake_no
+    side_stake = _side_stake(summary, side)
     if side_stake == 0:
         return None
     payout = stake * summary.pool / side_stake
     return (payout - stake).quantize(CENT, rounding=ROUND_DOWN)
+
+
+def payout_preview(stake: Decimal, summary: EventSummary, side: str) -> Optional[Decimal]:
+    """Return roughly what a new stake on `side` would pay back if that side wins.
+
+    The new stake is counted in the pool and on its side: stake x (pool +
+    stake) / (stake on that side + stake), rounded down to the cent. On a
+    names event where several can win it is the most it could pay. None for
+    a stake that is not positive.
+    """
+    if stake <= 0:
+        return None
+    payout = stake * (summary.pool + stake) / (_side_stake(summary, side) + stake)
+    return payout.quantize(CENT, rounding=ROUND_DOWN)
 
 
 def in_play(records: List[BetRecord]) -> Decimal:
@@ -182,8 +244,28 @@ def closest_rival(rows: List[LeaderboardRow], username: str) -> Optional[Leaderb
     return max(others, key=lambda r: r.balance)
 
 
-def filter_events(summaries: List[EventSummary], choice: str, now: datetime) -> List[EventSummary]:
-    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all."""
+def bettor_count(summary: EventSummary) -> int:
+    """Return how many different members have bet on the event."""
+    return len({b.username for b in summary.bettors})
+
+
+def is_hot(summary: EventSummary, group_size: int) -> bool:
+    """Return True for an open event that at least half the group (and 2+ people) bet on."""
+    needed = max(HOT_MIN_BETTORS, math.ceil(group_size * HOT_SHARE))
+    return summary.event.status == STATUS_OPEN and bettor_count(summary) >= needed
+
+
+def filter_events(summaries: List[EventSummary], choice: str, now: datetime,
+                  group_size: int = 0) -> List[EventSummary]:
+    """Return the events for one feed tab (see FEED_FILTERS); unknown choices show all.
+
+    group_size is the number of members, used to decide which events are hot.
+    Hot bets come with the most bettors first.
+    """
+    if choice == "Hot bets":
+        hot = [s for s in summaries if is_hot(s, group_size)]
+        return sorted(hot, key=bettor_count, reverse=True)
+
     def keep(summary: EventSummary) -> bool:
         """Return True if the event belongs in the chosen tab."""
         status = summary.event.status
@@ -241,18 +323,23 @@ def rank_members(
 
 @dataclass
 class Nudge:
-    """An open event the user has not bet on yet, and where the pool leans."""
+    """An open event the user has not bet on yet, and where the pool leans.
+
+    label is how the leading side is shown: YES, NO or an option's name.
+    """
 
     summary: EventSummary
     side: str
     share: int
     bettors: int
+    label: str = ""
 
 
 def nudge(summaries: List[EventSummary], username: str) -> Optional[Nudge]:
     """Return the open event with the biggest pool that the user has not bet on.
 
-    share is the percentage of the pool on the leading side (YES on a tie);
+    share is the percentage of the pool on the leading side (YES on a tie; on
+    a names event the option with the most coins, the first listed on a tie);
     bettors is how many members have bet on it. None if there is no such event.
     """
     candidates = [
@@ -263,11 +350,15 @@ def nudge(summaries: List[EventSummary], username: str) -> Optional[Nudge]:
     if not candidates:
         return None
     best = max(candidates, key=lambda s: s.pool)
+    names = {b.username for b in best.bettors}
+    if _is_names(best):
+        top = max(best.options, key=lambda o: o.stake)
+        return Nudge(summary=best, side=top.id, share=round(top.stake / best.pool * 100),
+                     bettors=len(names), label=top.name)
     side = SIDE_YES if best.stake_yes >= best.stake_no else SIDE_NO
     lead = best.stake_yes if side == SIDE_YES else best.stake_no
-    names = {b.username for b in best.bettors}
     return Nudge(summary=best, side=side, share=round(lead / best.pool * 100),
-                 bettors=len(names))
+                 bettors=len(names), label=side.upper())
 
 
 @dataclass

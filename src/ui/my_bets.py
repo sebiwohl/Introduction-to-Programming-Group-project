@@ -6,11 +6,16 @@ from typing import Dict, List
 import streamlit as st
 
 from src import stats
+from src.models import TYPE_NAMES
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import style
 
 FILTERS = ("All", "Open", "Awaiting result", "Won", "Lost", "Refunded")
+# Icon and color of each history filter (see style.tab_colors).
+FILTER_ICONS = {"All": ("apps", "yellow"), "Open": ("lock_open", "green"),
+                "Awaiting result": ("hourglass_top", "blue"), "Won": ("emoji_events", "gold"),
+                "Lost": ("cancel", "red"), "Refunded": ("undo", "grey")}
 FILTER_RESULTS = {"Open": (stats.OPEN, stats.PAUSED), "Awaiting result": (stats.AWAITING,),
                   "Won": (stats.WON,), "Lost": (stats.LOST,), "Refunded": (stats.REFUNDED,)}
 BADGES = {stats.OPEN: ("Open", "open"), stats.PAUSED: ("Paused", "paused"),
@@ -46,18 +51,19 @@ def _tiles(page: PageData, me: MemberStats, results: Counter) -> str:
         hit, hit_note = f"{round(me.hit_rate * 100)}%", f"{me.right} of {me.settled} settled calls right"
     best = style.odds_text(me.best_odds)
     best_note = style.esc(me.best_title) if me.best_odds else "Win a bet to set one"
+    best_number = style.big_number(f'<span class="ci-yes">{best}</span>')
     return (
-        '<div class="ci-tiles">'
-        f'<div class="ci-tile ci-tile-dark"><div class="ci-kicker">Balance</div>'
-        f'<div class="ci-big">{style.money(page.user.balance)}</div>'
+        '<div class="ci-tiles ci-tiles-anim">'
+        f'<div class="ci-tile ci-tile-dark" style="--t:0"><div class="ci-kicker">Balance</div>'
+        f'{style.big_number(style.money(page.user.balance))}'
         f'<div class="ci-muted">{since}</div></div>'
-        f'<div class="ci-tile ci-tile-warm"><div class="ci-kicker">In play</div>'
-        f'<div class="ci-big">{style.money(stats.in_play(page.my_bets))}</div>'
+        f'<div class="ci-tile ci-tile-warm" style="--t:1"><div class="ci-kicker">In play</div>'
+        f'{style.big_number(style.money(stats.in_play(page.my_bets)))}'
         f'<div class="ci-muted">{play_note}</div></div>'
-        f'<div class="ci-tile"><div class="ci-kicker">Hit rate</div><div class="ci-big">{hit}</div>'
+        f'<div class="ci-tile" style="--t:2"><div class="ci-kicker">Hit rate</div>{style.big_number(hit)}'
         f'<div class="ci-muted">{hit_note}</div></div>'
-        f'<div class="ci-tile"><div class="ci-kicker">Best call</div>'
-        f'<div class="ci-big ci-yes">{best}</div><div class="ci-muted">{best_note}</div></div>'
+        f'<div class="ci-tile" style="--t:3"><div class="ci-kicker">Best call</div>'
+        f'{best_number}<div class="ci-muted">{best_note}</div></div>'
         "</div>"
     )
 
@@ -76,7 +82,7 @@ def _status_cell(record: BetRecord, result: str, summary) -> str:
     if result == stats.WON:
         note = f"Paid out {style.money(record.bet.payout)}"
     elif result == stats.LOST:
-        note = f"{(record.outcome or '').upper()} won"
+        note = f"{record.winner_label or (record.outcome or '').upper()} won"
     elif result == stats.REFUNDED:
         note = "Stake returned"
     elif result == stats.AWAITING and summary is not None:
@@ -96,7 +102,21 @@ def _coins_cell(record: BetRecord, result: str, summary) -> str:
     profit = stats.estimated_profit(bet.stake, summary, bet.side) if summary else None
     if profit is None:
         return '<span class="ci-muted">—</span>'
-    return f'<span class="ci-muted">≈ {style.signed(profit)} if {bet.side.upper()}</span>'
+    up_to = "up to " if summary.event.multi_winner else ""
+    return (f'<span class="ci-muted">≈ {up_to}{style.signed(profit)} if '
+            f'{style.esc(_label(record))}</span>')
+
+
+def _label(record: BetRecord) -> str:
+    """Return how the bet's side is shown: YES, NO or the option's name."""
+    return record.side_label or record.bet.side.upper()
+
+
+def _call_tag(record: BetRecord) -> str:
+    """Return the side tag: blue YES or orange-red NO, or the option's name in bold."""
+    if record.event_type != TYPE_NAMES:
+        return style.side_tag(record.bet.side)
+    return f"<b>{style.esc(_label(record))}</b>"
 
 
 def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> str:
@@ -111,7 +131,7 @@ def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> 
         rows.append(
             f"<tr{warm}><td><div class='ci-t-title'>{style.esc(record.event_title)}</div>"
             f'<div class="ci-muted" style="font-size:.75rem">{_when_line(record, summary)}</div></td>'
-            f"<td>{style.side_tag(record.bet.side)}&nbsp; <b>{style.money(record.bet.stake)}</b></td>"
+            f"<td>{_call_tag(record)}&nbsp; <b>{style.money(record.bet.stake)}</b></td>"
             f"<td><b>{style.odds_text(odds)}</b></td>"
             f"<td>{_status_cell(record, result, summary)}</td>"
             f'<td class="ci-num">{_coins_cell(record, result, summary)}</td></tr>'
@@ -129,7 +149,9 @@ def my_bets_page(page: PageData, me: MemberStats) -> None:
     label_col, filter_col = st.columns([1, 3], vertical_alignment="center")
     style.show(where=label_col, markup='<div class="ci-label">History</div>')
     with filter_col:
+        style.tab_colors("pills_history", [FILTER_ICONS[f][1] for f in FILTERS])
         choice = st.radio("Filter", FILTERS, horizontal=True, key="pills_history",
+                          format_func=lambda f: style.icon_label(FILTER_ICONS[f][0], f),
                           label_visibility="collapsed")
     wanted = FILTER_RESULTS.get(choice)
     records = [r for r in page.my_bets if wanted is None or stats.bet_result(r) in wanted]

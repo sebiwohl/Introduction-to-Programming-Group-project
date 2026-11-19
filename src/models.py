@@ -13,6 +13,7 @@ SIDE_YES = "yes"
 SIDE_NO = "no"
 SIDES = (SIDE_YES, SIDE_NO)
 
+
 ROLE_MEMBER = "member"
 ROLE_ADMIN = "admin"
 
@@ -29,9 +30,15 @@ VOTE_DELETE = "delete"
 VOTE_KEEP = "keep"
 
 # Event types. Over/under is stored with the same two sides: yes = over, no = under.
+# A names event has its own options (people's names, for example) instead of
+# yes and no, and each bet names one of them.
 TYPE_YES_NO = "yes_no"
 TYPE_OVER_UNDER = "over_under"
-EVENT_TYPES = (TYPE_YES_NO, TYPE_OVER_UNDER)
+TYPE_NAMES = "names"
+EVENT_TYPES = (TYPE_YES_NO, TYPE_OVER_UNDER, TYPE_NAMES)
+MIN_OPTIONS = 2
+MAX_OPTIONS = 10
+MAX_OPTION_LENGTH = 40
 
 
 @dataclass
@@ -75,13 +82,26 @@ class Membership:
 
 
 @dataclass
+class Option:
+    """One answer of a names event, like 'Marta'. Bets refer to it by id."""
+
+    id: str
+    name: str
+
+
+@dataclass
 class Event:
     """Something the group bets on. Outcome is None until resolved.
 
-    event_type is yes/no or over/under. For over/under, line is the number set
-    by the creator and result_value the actual number entered when resolving.
-    event_time is when the event happens; betting closes at close_time, which
-    is never later. Old events without an event date use their close_time.
+    event_type is yes/no, over/under or names. For over/under, line is the
+    number set by the creator and result_value the actual number entered when
+    resolving. event_time is when the event happens; betting closes at
+    close_time, which is never later. Old events without an event date use
+    their close_time.
+
+    A names event has options instead of yes and no. Its winners are the ids
+    of the winning options, set when it is resolved (its outcome stays None).
+    With multi_winner, more than one option can win.
     """
 
     id: str
@@ -97,6 +117,9 @@ class Event:
     line: Optional[Decimal] = None
     event_time: Optional[datetime] = None
     result_value: Optional[Decimal] = None
+    options: list = field(default_factory=list)
+    multi_winner: bool = False
+    winners: list = field(default_factory=list)
 
     def __post_init__(self) -> None:
         """Use the close time as the event date when none is given."""
@@ -106,7 +129,7 @@ class Event:
 
 @dataclass
 class Bet:
-    """A stake placed by a user on one side of an event."""
+    """A stake placed by a user on one side of an event (or one option of a names event)."""
 
     id: str
     event_id: str

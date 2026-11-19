@@ -523,3 +523,21 @@ def test_version_1_backup_restores_in_the_new_format(db):
     data, warning = storage.load_with_recovery()
     assert warning is not None
     assert data == upgrade(version_1_data())
+
+
+@needs_db
+def test_names_event_round_trips_through_the_database(db):
+    """A names event (options, winner mode, winners) and a bet on an option come back exactly."""
+    data = sample_data()
+    data["events"].append(
+        {"id": "e2", "group_id": "g1", "creator_id": "u2", "title": "Who is late?",
+         "description": "", "close_time": "2026-11-20T18:00:00+00:00", "status": "open",
+         "outcome": None, "flags": [], "type": "names", "line": None,
+         "event_time": "2026-11-20T18:00:00+00:00", "result_value": None,
+         "options": [{"id": "o1", "name": "Tiago"}, {"id": "o2", "name": "<b>Marta</b>"}],
+         "multi_winner": True, "winners": []}
+    )
+    data["bets"] = [{"id": "b1", "event_id": "e2", "user_id": "u1", "side": "o2", "stake": 500,
+                     "payout": None}]
+    storage.save_data(data)
+    assert storage.load_data() == data
