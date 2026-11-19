@@ -39,9 +39,10 @@ def names(path):
     Returns (ids, group id, event).
     """
     ids = [auth.sign_up(f"user{i}", PASSWORD, path).id for i in range(4)]
-    group = auth.create_group(ids[0], "Friends", START, path)
+    group = auth.create_group(ids[0], "Friends", path=path)
     for user_id in ids[1:]:
         auth.join_group(user_id, group.invite_code, path)
+    balances.top_up(ids[0], group.id, START, NOW - timedelta(hours=1), path)
     event = service.create_event(ids[1], "Who is late tonight?", CLOSE, NOW, path=path,
                                  options=["Anna", "Ben", "Carl"])
     for user_id, option, stake in ((ids[1], 0, "30"), (ids[2], 1, "50"), (ids[3], 2, "20")):

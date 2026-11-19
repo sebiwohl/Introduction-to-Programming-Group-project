@@ -152,11 +152,15 @@ Data is kept in the JSON format below, loaded at start-up and saved after every 
 
 **Where it lives.** The deployed app runs on Streamlit Community Cloud, which erases local files on every reboot (confirmed with a hosting test on 2026-11-16). So when the `DATABASE_URL` environment variable is set, the data is stored in a Supabase (PostgreSQL) database instead: the whole data structure is one JSON row in the table `app_data`, and backups are rows in `app_data_backups` (the newest 20 of each kind are kept). Each change locks the row (`SELECT ... FOR UPDATE`), so two users saving at the same time cannot overwrite each other, and a failed change is rolled back. Both tables have row level security turned on, so Supabase's public web API cannot read them. Without `DATABASE_URL` (local development and tests) the JSON file described next is used.
 
-All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 2) next to the `users`, `memberships`, `groups`, `events`, `bets`, `polls`, `topups`, `repayments` and `notifications` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
+All data lives in one file, `data/data.json` (the `DATA_FILE` environment variable can point elsewhere), with a top-level `schema_version` (currently 3) next to the `users`, `memberships`, `groups`, `events`, `bets`, `polls`, `topups`, `repayments` and `notifications` lists. Every save is validated first and then written atomically. Before each save, the previous file is copied to `data/backups/`, and the 20 newest backups are kept. At start-up, `load_with_recovery` restores the newest backup that is still valid if the main file is damaged, moves the broken file aside, and returns a warning that the app shows. Limit: the backups are on the same disk as the data, so a host that wipes local files on restart deletes them as well.
 
 Validation also enforces these rules: every bet on a deleted event has a payout equal to its stake (a full refund). Usernames must be unique, ignoring case and spaces at the start or end ("Anna" and " anna" clash), but each name is stored exactly as entered. `close_time` and `closes_at` must be ISO 8601 times with a timezone offset, for example `2026-11-20T18:00:00+00:00`. Times without an offset are rejected. A user has at most one membership per group. An over/under event must have a line and a yes/no event must not; only over/under events have a result number; betting must close no later than the event date (`close_time` <= `event_time`). A names event (`"type": "names"`) has no line and no result number; it must have 2 to 10 valid options, every bet on it must name one of its option ids, its `outcome` stays null, and its `winners` are set exactly when it is resolved (only one unless several can win). The names fields (`options`, `multi_winner`, `winners`) are stored only on names events, so other events keep exactly the format above.
 
-**Older data.** Data saved with `schema_version` 1 (group, role and balance on the user) is upgraded when it is loaded (`src/migration.py`) and saved in the new format at the next change, so existing files, database rows and backups keep working without a separate step. Names events need no upgrade: they only add optional fields to version 2.
+**Older data.** Data saved in an older format is upgraded when it is loaded (`src/migration.py`), one version at a time, and saved in the new format at the next change, so existing files, database rows and backups keep working without a separate step.
+- Version 1 → 2: group, role and balance move from the user into a membership.
+- Version 2 → 3: groups lose `start_balance`, and each membership gets `received` = the group's old start balance plus every top-up recorded in the group (everyone had joined with the start balance).
+
+Names events need no upgrade: they only add optional fields to version 2.
 
 ### 4.2 Entities
 
@@ -179,6 +183,7 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | role       | member or admin                                    |
 | balance    | Current coins in this group                        |
 | restricted | true when the admin has restricted the member (2.2) |
+| received   | Coins given by top-ups this period, since the last repayment (2.4). Result this period = balance - received; below 0 means debt |
 
 **Group**
 
@@ -188,7 +193,8 @@ Validation also enforces these rules: every bet on a deleted event has a payout 
 | name          | Group name                 |
 | admin_id      | The admin's user id        |
 | invite_code   | Code for joining           |
-| start_balance | Coins given to new members (until top-ups replace it, see 2.4) |
+
+There is no starting balance: members join with 0 and get coins from top-ups (2.4).
 
 **Event**
 

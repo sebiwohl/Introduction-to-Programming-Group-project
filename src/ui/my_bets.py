@@ -38,9 +38,9 @@ def _kicker(results: Counter, total: int) -> str:
 
 def _tiles(page: PageData, me: MemberStats, results: Counter) -> str:
     """Return the Balance, In play, Hit rate and Best call tiles."""
-    start = page.group.start_balance
-    change = page.user.balance - start
-    since = f"{style.signed(change)} since you started with {style.money(start)}"
+    change = page.user.balance - page.user.received
+    since = (f"{style.signed(change)} this period · "
+             f"received {style.money(page.user.received)}")
     waiting, open_count = results[stats.AWAITING], results[stats.OPEN] + results[stats.PAUSED]
     play_parts = ([_plural(open_count, "open bet")] if open_count else []) + (
         [f"{_plural(waiting, 'bet')} awaiting result"] if waiting else [])

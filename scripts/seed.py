@@ -23,17 +23,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src import auth, service, storage  # noqa: E402
-from src.convert import event_to_dict, notification_to_dict, topup_to_dict  # noqa: E402
-from src.models import (  # noqa: E402
-    TYPE_OVER_UNDER, Event, Notification, TopUp,
-)
+from src import auth, balances, service, storage  # noqa: E402
+from src.convert import event_to_dict, notification_to_dict  # noqa: E402
+from src.models import TYPE_OVER_UNDER, Event, Notification  # noqa: E402
 
 ADMIN = "demo_admin"
 MEMBER = "demo_member"
 FRIENDS = ("anna", "ben")
 GROUP_NAME = "Demo Friends"
-START_BALANCE = Decimal("1000")
+FIRST_TOP_UP = Decimal("1000")
 PASSWORD_ENV = "SEED_PASSWORD"
 # Profile pictures for the demo; ben keeps his initial to show the default.
 PICTURES = {ADMIN: "fox", MEMBER: "panda", "anna": "cat"}
@@ -55,23 +53,25 @@ def _confirm_database() -> None:
         raise SystemExit("Cancelled, nothing changed.")
 
 
-def _users(password: str, path) -> dict:
-    """Create the demo accounts, the group and the profile pictures; return {username: user id}."""
+def _users(password: str, path, now: datetime) -> dict:
+    """Create the demo accounts, the group and the profile pictures; return {username: user id}.
+
+    Everyone joins with 0, then the admin tops up everyone at once, as in the app.
+    """
     ids = {name: auth.sign_up(name, password, path).id for name in (ADMIN, MEMBER, *FRIENDS)}
-    group = auth.create_group(ids[ADMIN], GROUP_NAME, START_BALANCE, path)
+    group = auth.create_group(ids[ADMIN], GROUP_NAME, path)
     for name in (MEMBER, *FRIENDS):
         auth.join_group(ids[name], group.invite_code, path)
+    balances.top_up(ids[ADMIN], group.id, FIRST_TOP_UP, now - timedelta(days=4), path)
     for name, animal in PICTURES.items():
         service.set_avatar(ids[name], animal, path)
     return ids
 
 
 def _add_records(path, ids: dict, now: datetime) -> str:
-    """Store the start top-up, an over/under event and a notification; return the event id."""
+    """Store an over/under event and a notification; return the event id."""
     with storage.transaction(path) as data:
         group_id = data["groups"][0]["id"]
-        topup = TopUp(id="seed-topup", group_id=group_id, amount=START_BALANCE,
-                      created_by=ids[ADMIN], created_at=now - timedelta(days=4))
         goals = Event(id="seed-goals", group_id=group_id, creator_id=ids[MEMBER],
                       title="Goals in Sunday's derby", event_type=TYPE_OVER_UNDER,
                       line=Decimal("2.5"), close_time=now + timedelta(days=2),
@@ -80,7 +80,6 @@ def _add_records(path, ids: dict, now: datetime) -> str:
         note = Notification(id="seed-note", user_id=ids[ADMIN], group_id=group_id,
                             text="Welcome! Share the invite code with your friends.",
                             created_at=now - timedelta(days=4))
-        data["topups"].append(topup_to_dict(topup))
         data["events"].append(event_to_dict(goals))
         data["notifications"].append(notification_to_dict(note))
     return goals.id
@@ -117,7 +116,7 @@ def _events(path, ids: dict, now: datetime) -> None:
 def seed(path, password: str, now: datetime) -> None:
     """Replace the data at `path` with the demo data (None means the database)."""
     storage.save_data(storage.empty_data(), path)
-    ids = _users(password, path)
+    ids = _users(password, path, now)
     _events(path, ids, now)
 
 

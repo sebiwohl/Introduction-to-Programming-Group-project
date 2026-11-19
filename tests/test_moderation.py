@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, members, moderation, service, storage
+from src import auth, balances, members, moderation, service, storage
 from src.auth import AuthError
 from src.models import Event, User
 
@@ -31,9 +31,10 @@ def path(tmp_path):
 def make_group(path, size):
     """Create a group of `size` members (u0 is the admin); return (ids, group id)."""
     ids = [auth.sign_up(f"user{i}", PASSWORD, path).id for i in range(size)]
-    group = auth.create_group(ids[0], "Friends", START, path)
+    group = auth.create_group(ids[0], "Friends", path=path)
     for user_id in ids[1:]:
         auth.join_group(user_id, group.invite_code, path)
+    balances.top_up(ids[0], group.id, START, NOW, path)
     return ids, group.id
 
 

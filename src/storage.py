@@ -11,7 +11,7 @@ Two places can hold the data, with the same format and the same rules:
   is one JSON row in ``app_data``; backups are rows in ``app_data_backups``.
   Needed on hosts that erase local files on restart (Streamlit Community Cloud).
 
-Data saved in an older format (``schema_version`` 1) is upgraded on loading by
+Data saved in an older format (``schema_version`` 1 or 2) is upgraded on loading by
 ``src/migration.py`` and written in the current format at the next save.
 
 An explicit ``path`` argument always means the file, so tests never touch the
@@ -35,7 +35,7 @@ from typing import Any
 from src.migration import upgrade
 from src.models import EVENT_TYPES, MAX_OPTION_LENGTH, MAX_OPTIONS, MIN_OPTIONS, TYPE_NAMES
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 MAX_BACKUPS = 20
 DEFAULT_DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "data.json"
 SECTIONS = (
@@ -206,13 +206,13 @@ RULES: dict[str, dict[str, Rule]] = {
         "role": (partial(_is_choice, ("member", "admin")), "member or admin"),
         "balance": (partial(_is_int_min, 0), "a whole number >= 0"),
         "restricted": (_is_bool, "true or false"),
+        "received": (partial(_is_int_min, 0), "a whole number >= 0"),
     },
     "groups": {
         "id": (_is_text, "a non-empty string"),
         "name": (_is_text, "a non-empty string"),
         "admin_id": (partial(_is_ref, "users"), "an existing user id"),
         "invite_code": (_is_text, "a non-empty string"),
-        "start_balance": (partial(_is_int_min, 1), "a whole number > 0"),
     },
     "events": {
         "id": (_is_text, "a non-empty string"),

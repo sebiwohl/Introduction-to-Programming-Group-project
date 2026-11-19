@@ -29,11 +29,15 @@ def path(tmp_path):
 
 @pytest.fixture
 def group(path):
-    """Return (anna = admin, ben, carl = members, dan = outsider, group id); start balance 100."""
+    """Return (anna = admin, ben, carl = members, dan = outsider, group id).
+
+    Everyone joined with 0, then the admin topped up 100 an hour ago.
+    """
     ids = [auth.sign_up(name, PASSWORD, path).id for name in ("anna", "ben", "carl", "dan")]
-    friends = auth.create_group(ids[0], "Friends", Decimal("100"), path)
+    friends = auth.create_group(ids[0], "Friends", path=path)
     for user_id in ids[1:3]:
         auth.join_group(user_id, friends.invite_code, path)
+    balances.top_up(ids[0], friends.id, 100, NOW - timedelta(hours=1), path)
     return (*ids, friends.id)
 
 
@@ -53,7 +57,7 @@ def test_top_up_gives_every_member_the_same_and_is_recorded(path, group):
     anna, ben, carl, _, group_id = group
     topup = balances.top_up(anna, group_id, Decimal("50.25"), NOW, path)
     assert [balance(path, u, group_id) for u in (anna, ben, carl)] == [Decimal("150.25")] * 3
-    [stored] = storage.load_data(path)["topups"]
+    stored = storage.load_data(path)["topups"][-1]
     assert stored == {"id": topup.id, "group_id": group_id, "amount": 5025,
                       "created_by": anna, "created_at": NOW.isoformat()}
 
@@ -67,8 +71,9 @@ def test_restricted_members_get_the_top_up_too(path, group):
 
 def test_top_up_leaves_other_groups_alone(path, group):
     anna, ben, _, dan, group_id = group
-    other = auth.create_group(dan, "Others", Decimal("100"), path)
+    other = auth.create_group(dan, "Others", path=path)
     auth.join_group(ben, other.invite_code, path)
+    balances.top_up(dan, other.id, 100, NOW, path)
     balances.top_up(anna, group_id, 30, NOW, path)
     assert balance(path, ben, other.id) == Decimal("100.00")
 
@@ -77,7 +82,7 @@ def test_member_cannot_top_up(path, group):
     anna, ben, _, _, group_id = group
     with pytest.raises(AuthError, match="Only the group admin"):
         balances.top_up(ben, group_id, 50, NOW, path)
-    assert storage.load_data(path)["topups"] == []
+    assert len(storage.load_data(path)["topups"]) == 1  # only the fixture's top-up
     assert balance(path, ben, group_id) == Decimal("100.00")
 
 
@@ -92,7 +97,7 @@ def test_bad_top_up_amount_is_rejected_and_nothing_changes(path, group, amount):
     anna, _, _, _, group_id = group
     with pytest.raises(AuthError, match="Top-up"):
         balances.top_up(anna, group_id, amount, NOW, path)
-    assert storage.load_data(path)["topups"] == []
+    assert len(storage.load_data(path)["topups"]) == 1  # only the fixture's top-up
 
 
 def test_smallest_top_up_is_one_cent(path, group):
@@ -102,10 +107,11 @@ def test_smallest_top_up_is_one_cent(path, group):
 
 
 def test_last_top_up_and_low_line(path, group):
-    anna, _, _, _, group_id = group
+    anna, _, _, dan, group_id = group
+    fresh = auth.create_group(dan, "Fresh", path=path)
     data = storage.load_data(path)
-    assert balances.last_top_up(data, group_id) is None
-    assert balances.low_balance_line(data, group_id) is None
+    assert balances.last_top_up(data, fresh.id) is None
+    assert balances.low_balance_line(data, fresh.id) is None
     balances.top_up(anna, group_id, 500, NOW, path)
     balances.top_up(anna, group_id, 200, NOW + timedelta(hours=1), path)
     data = storage.load_data(path)
@@ -186,7 +192,60 @@ def test_admin_is_notified_about_themselves_too(path, topped):
 
 
 def test_no_alert_without_any_top_up(path, group):
-    anna, ben, _, _, _ = group
+    _, _, _, dan, _ = group
+    fresh = auth.create_group(dan, "Fresh", path=path)
+    data = storage.load_data(path)
+    assert balances.notify_if_low(data, fresh.id, dan, Decimal("10"), NOW) is False
+    assert data["notifications"] == []
+
+
+# --- received this period, result and debt (schema version 3) ---------------------
+
+def received(path, user_id, group_id):
+    """Return what the user received this period in the group."""
+    return auth.user_in_group(storage.load_data(path), user_id, group_id).received
+
+
+def test_new_group_starts_everyone_at_zero(path):
+    anna = auth.sign_up("zoe", PASSWORD, path).id
+    group = auth.create_group(anna, "New", path=path)
+    member = auth.user_in_group(storage.load_data(path), anna, group.id)
+    assert (member.balance, member.received) == (0, 0)
+    with pytest.raises(AuthError, match="Top-up required"):
+        service.create_event(anna, "Rain", CLOSE, NOW, path=path)
+
+
+def test_top_up_counts_as_received(path, group):
+    anna, ben, _, _, group_id = group
+    balances.top_up(anna, group_id, 50, NOW, path)
+    assert received(path, ben, group_id) == Decimal("150.00")
+
+
+def test_member_joining_mid_period_gets_only_later_top_ups(path, group):
+    anna, _, _, dan, group_id = group
+    code = next(g["invite_code"] for g in storage.load_data(path)["groups"])
+    auth.join_group(dan, code, path)
+    assert (balance(path, dan, group_id), received(path, dan, group_id)) == (0, 0)
+    balances.top_up(anna, group_id, 40, NOW, path)
+    assert (balance(path, dan, group_id), received(path, dan, group_id)) == (40, 40)
+
+
+def test_result_and_debt_follow_balance_against_received(path, group):
+    anna, ben, carl, _, group_id = group
     event = service.create_event(anna, "Rain tomorrow", CLOSE, NOW, path=path)
-    service.place_bet(ben, event.id, "yes", Decimal("100"), NOW, path)
-    assert notes(path, anna) == []
+    service.place_bet(ben, event.id, "yes", Decimal("30"), NOW, path)
+    service.place_bet(carl, event.id, "no", Decimal("10"), NOW, path)
+    service.resolve_event(anna, event.id, "yes", CLOSE + timedelta(hours=1), path)
+    data = storage.load_data(path)
+    ben_m, carl_m, anna_m = (auth.user_in_group(data, u, group_id) for u in (ben, carl, anna))
+    assert [balances.period_result(m) for m in (ben_m, carl_m, anna_m)] == [
+        Decimal("10.00"), Decimal("-10.00"), Decimal("0.00")]
+    assert [balances.has_debt(m) for m in (ben_m, carl_m, anna_m)] == [False, True, False]
+
+
+def test_open_stakes_count_against_the_result_until_settled(path, group):
+    anna, ben, _, _, group_id = group
+    event = service.create_event(anna, "Rain tomorrow", CLOSE, NOW, path=path)
+    service.place_bet(ben, event.id, "yes", Decimal("30"), NOW, path)
+    member = auth.user_in_group(storage.load_data(path), ben, group_id)
+    assert balances.period_result(member) == Decimal("-30.00")

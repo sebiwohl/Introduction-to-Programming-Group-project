@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, service, storage
+from src import auth, balances, service, storage
 from src.auth import AuthError
 from src.betting import BettingError
 from src.models import Event, User
@@ -127,18 +127,14 @@ def test_log_in_rejects_non_text(path):
 
 # --- groups ---------------------------------------------------------------------
 
-def test_create_group_makes_creator_admin_with_start_balance(path):
+def test_create_group_makes_creator_admin_at_zero(path):
+    """Requirement 2.2: no starting balance; the admin also joins with 0."""
     anna = auth.sign_up("Anna", PASSWORD, path)
-    group = auth.create_group(anna.id, " Friends ", Decimal("500.50"), path)
+    group = auth.create_group(anna.id, " Friends ", path=path)
     stored = saved_user(path, anna.id)
-    assert (group.name, group.admin_id, group.start_balance) == ("Friends", anna.id, Decimal("500.50"))
-    assert (stored["group_id"], stored["role"], stored["balance"]) == (group.id, "admin", 50050)
-
-
-def test_create_group_default_balance_is_1000(path):
-    anna = auth.sign_up("Anna", PASSWORD, path)
-    auth.create_group(anna.id, "Friends", path=path)
-    assert service.get_user(anna.id, path).balance == 1000
+    assert (group.name, group.admin_id) == ("Friends", anna.id)
+    assert (stored["group_id"], stored["role"], stored["balance"]) == (group.id, "admin", 0)
+    assert service.get_user(anna.id, path).received == 0
 
 
 def test_invite_code_uses_safe_characters(path):
@@ -155,13 +151,6 @@ def test_create_group_rejects_bad_name(path, name):
         auth.create_group(anna.id, name, path=path)
 
 
-@pytest.mark.parametrize("balance", [0, -10, 1.5, Decimal("1.234"), True, "100"])
-def test_create_group_rejects_bad_start_balance(path, balance):
-    anna = auth.sign_up("Anna", PASSWORD, path)
-    with pytest.raises(AuthError, match="Start balance"):
-        auth.create_group(anna.id, "Friends", balance, path)
-
-
 def test_can_create_second_group(path):
     """Requirement 2.3: a user can be in several groups (replaces the one-group rule)."""
     anna = auth.sign_up("Anna", PASSWORD, path)
@@ -172,12 +161,12 @@ def test_can_create_second_group(path):
 
 def test_join_group_with_code_as_member(path):
     anna = auth.sign_up("Anna", PASSWORD, path)
-    group = auth.create_group(anna.id, "Friends", Decimal("250"), path)
+    group = auth.create_group(anna.id, "Friends", path=path)
     ben = auth.sign_up("Ben", PASSWORD, path)
     joined = auth.join_group(ben.id, f"  {group.invite_code.lower()} ", path)
     stored = saved_user(path, ben.id)
     assert joined == group
-    assert (stored["group_id"], stored["role"], stored["balance"]) == (group.id, "member", 25000)
+    assert (stored["group_id"], stored["role"], stored["balance"]) == (group.id, "member", 0)
 
 
 @pytest.mark.parametrize("code", ["WRONG1", "", None])
@@ -282,13 +271,14 @@ def test_auth_error_is_a_betting_error():
 def test_sign_up_join_bet_and_resolve(path):
     now = CLOSE - timedelta(hours=1)
     anna = auth.sign_up("Anna", PASSWORD, path)
-    group = auth.create_group(anna.id, "Friends", Decimal("100"), path)
+    group = auth.create_group(anna.id, "Friends", path=path)
     auth.sign_up("Ben", PASSWORD, path)
     auth.sign_up("Cleo", PASSWORD, path)
     ben = auth.log_in("ben", PASSWORD, path)
     cleo = auth.log_in("Cleo", PASSWORD, path)
     auth.join_group(ben.id, group.invite_code, path)
     auth.join_group(cleo.id, group.invite_code, path)
+    balances.top_up(anna.id, group.id, 100, now, path)
     event = service.create_event(ben.id, "Anna is late", CLOSE, now, path=path)
     service.place_bet(anna.id, event.id, "no", 30, now, path)
     service.place_bet(ben.id, event.id, "yes", 10, now, path)

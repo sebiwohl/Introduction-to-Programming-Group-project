@@ -545,6 +545,8 @@ def events_page(page: PageData, me: MemberStats, now: datetime) -> None:
     style.show(style.heading(page.group.name, _feed_kicker(page.events)))
     left, right = st.columns([2.5, 1], gap="large")
     with left:
+        if page.user.balance <= 0:
+            st.info(auth.TOP_UP_REQUIRED + " The admin tops up everyone in the Group tab.")
         style.show(_confetti(page))
         st.session_state[LAST_LOAD_KEY] = clock.monotonic()
         _watch_for_wins(page.user.id)

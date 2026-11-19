@@ -1,11 +1,16 @@
 """The Group page: members and balances, the invite code, the rules and the account box."""
 
+from datetime import datetime, timezone
+from decimal import Decimal
+
 import streamlit as st
 
+from src import balances
 from src.models import ROLE_ADMIN
 from src.service import PageData
 from src.ui import style
 from src.ui.account import log_out
+from src.ui.actions import attempt
 
 RULES = (
     "Odds come from the group: winners split the whole pool in proportion to their stakes.",
@@ -47,8 +52,28 @@ def _invite_card(page: PageData) -> None:
         st.code(page.group.invite_code, language=None)
         style.show(
             '<div style="font-size:.85rem;color:#D6D6DC">Friends enter this code after signing up. '
-            f"New members start with {style.money(page.group.start_balance)} coins.</div>"
+            "New members start at 0 and get coins with the next top-up.</div>"
         )
+
+
+def _top_up_form(page: PageData) -> None:
+    """Draw the admin's form that gives every member the same amount of coins.
+
+    The permission is checked again in balances.top_up; this only hides the
+    form from members.
+    """
+    if page.user.role != ROLE_ADMIN:
+        return
+    with st.form("top_up"):
+        style.show('<div class="ci-label">Top up everyone</div>')
+        st.caption("Every member gets the same amount, new members included.")
+        amount = st.number_input("Coins for each member", min_value=1, value=100, step=50)
+        if st.form_submit_button("Top up", type="primary"):
+            if attempt(lambda: balances.top_up(page.user.id, page.group.id,
+                                               Decimal(int(amount)),
+                                               datetime.now(timezone.utc)),
+                       f"Everyone got {int(amount)} coins."):
+                st.rerun()
 
 
 def _rules_card() -> str:
@@ -75,11 +100,12 @@ def group_page(page: PageData) -> None:
     kicker = f"{len(page.leaderboard)} members"
     if admin:
         kicker += f" · admin: {admin}"
-    kicker += f" · everyone started with {style.money(page.group.start_balance)} coins"
     style.show(style.heading(page.group.name, kicker))
     st.write("")
     left, right = st.columns([2, 1], gap="large")
     style.show(where=left, markup=_members_card(page))
+    with left:
+        _top_up_form(page)
     with right:
         _invite_card(page)
         style.show(_rules_card())

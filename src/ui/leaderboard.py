@@ -37,12 +37,11 @@ def _admin_name(rows: List[LeaderboardRow]) -> str:
 
 
 def _kicker(page: PageData) -> str:
-    """Return the line under the title: group, members, admin, starting balance."""
+    """Return the line under the title: group, members, admin."""
     admin = _admin_name(page.leaderboard)
     parts = [page.group.name, f"{len(page.leaderboard)} members"]
     if admin:
         parts.append(f"admin: {admin}")
-    parts.append(f"everyone started with {style.money(page.group.start_balance)}")
     return " · ".join(parts)
 
 
@@ -73,14 +72,13 @@ def _table(page: PageData, ordered: List[LeaderboardRow], member: Dict[str, Memb
     The rows shuffle into order, again each time the ranking changes.
     """
     by_coins = ranking == "Coins"
-    start = page.group.start_balance
     rows = []
     count = len(ordered)
     variant = stats.RANKINGS.index(ranking) if ranking in stats.RANKINGS else 0
     for place, row in enumerate(ordered, start=1):
         is_me = row.username == page.user.username
         stats_of = member.get(row.username, MemberStats())
-        change = row.balance - start
+        change = row.balance - row.received
         change_css = "ci-gain" if change > 0 else ""
         rows.append(
             f'<tr class="ci-shuffle{" ci-me" if is_me else ""}" '
@@ -92,7 +90,7 @@ def _table(page: PageData, ordered: List[LeaderboardRow], member: Dict[str, Memb
             f"<td>{_hit_rate(stats_of)}</td><td>{_streak(stats_of)}</td>"
             f"<td><b>{style.odds_text(stats_of.best_odds)}</b></td></tr>"
         )
-    head = ("<tr><th>#</th><th>Member</th><th>Coins</th><th>Vs start</th><th>Hit rate</th>"
+    head = ("<tr><th>#</th><th>Member</th><th>Coins</th><th>This period</th><th>Hit rate</th>"
             "<th>Streak</th><th>Best call</th></tr>")
     return f'<div class="ci-table-wrap"><table class="ci-table">{head}{"".join(rows)}</table></div>'
 

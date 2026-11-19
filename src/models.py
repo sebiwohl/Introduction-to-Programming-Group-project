@@ -45,9 +45,9 @@ MAX_OPTION_LENGTH = 40
 class User:
     """A person who can log in and bet. Balance is in coins, 2 decimals.
 
-    group_id, role, balance and restricted are not stored on the user: they
-    come from the user's membership (see Membership) and are filled in when
-    data is loaded.
+    group_id, role, balance, restricted and received are not stored on the
+    user: they come from the user's membership (see Membership) and are filled
+    in when data is loaded.
     """
 
     id: str
@@ -58,22 +58,26 @@ class User:
     balance: Decimal = Decimal("0")
     avatar: str = ""
     restricted: bool = False
+    received: Decimal = Decimal("0")
 
 
 @dataclass
 class Group:
-    """A friend group with one admin and a shared starting balance."""
+    """A friend group with one admin. Members join with 0 and get coins from top-ups."""
 
     id: str
     name: str
     admin_id: str
     invite_code: str
-    start_balance: Decimal = Decimal("1000")
 
 
 @dataclass
 class Membership:
-    """A user's place in one group: their role, balance and restriction there."""
+    """A user's place in one group: their role, balance and restriction there.
+
+    received is what top-ups gave them this period (since the last repayment);
+    balance minus received is their result this period (requirements 2.4).
+    """
 
     id: str
     user_id: str
@@ -81,6 +85,7 @@ class Membership:
     role: str = ROLE_MEMBER
     balance: Decimal = Decimal("0")
     restricted: bool = False
+    received: Decimal = Decimal("0")
 
 
 @dataclass

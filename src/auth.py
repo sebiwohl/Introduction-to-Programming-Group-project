@@ -23,7 +23,7 @@ from src.convert import (
     user_from_dict, user_to_dict,
 )
 from src.notifications import add_notification
-from src.models import CENT, ROLE_ADMIN, ROLE_MEMBER, Event, Group, Membership, User
+from src.models import ROLE_ADMIN, ROLE_MEMBER, Event, Group, Membership, User
 
 # Password hashing. The iteration count is stored inside each hash, so it can be
 # raised later without breaking existing accounts.
@@ -35,7 +35,6 @@ MIN_PASSWORD_LENGTH = 8
 MIN_USERNAME_LENGTH = 3
 MAX_USERNAME_LENGTH = 30
 MAX_GROUP_NAME_LENGTH = 50
-DEFAULT_START_BALANCE = Decimal("1000")
 
 # Invite codes: 6 characters, without look-alikes such as 0/O and 1/I.
 INVITE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
@@ -181,7 +180,7 @@ def _group_membership(data: dict, user_id: str, group_id: str) -> Optional[dict]
                  if m["user_id"] == user_id and m["group_id"] == group_id), None)
 
 
-def _add_membership(data: dict, user_id: str, group_id: str, role: str, balance: Decimal) -> None:
+def _add_membership(data: dict, user_id: str, group_id: str, role: str) -> None:
     """Store a new membership for the user, unless they are already in this group.
 
     A user can be in several groups (requirements 2.3), but only once in each.
@@ -189,7 +188,7 @@ def _add_membership(data: dict, user_id: str, group_id: str, role: str, balance:
     if _group_membership(data, user_id, group_id) is not None:
         raise AuthError("You are already in this group.")
     membership = Membership(id=uuid.uuid4().hex, user_id=user_id, group_id=group_id,
-                            role=role, balance=balance)
+                            role=role)
     data["memberships"].append(membership_to_dict(membership))
 
 
@@ -202,33 +201,22 @@ def _new_invite_code(data: dict) -> str:
             return code
 
 
-def create_group(
-    user_id: str,
-    name: str,
-    start_balance: Decimal = DEFAULT_START_BALANCE,
-    path=None,
-) -> Group:
-    """Create a group, make the user its admin and give them the start balance.
+def create_group(user_id: str, name: str, path=None) -> Group:
+    """Create a group and make the user its admin, with a balance of 0.
 
-    The user may already be in other groups.
+    There is no starting balance (requirements 2.2): once everyone has joined,
+    the admin tops up all members at once. The user may be in other groups.
     """
     if not isinstance(name, str) or not name.strip():
         raise AuthError("Group name cannot be empty.")
     name = name.strip()
     if len(name) > MAX_GROUP_NAME_LENGTH:
         raise AuthError(f"Group name can be at most {MAX_GROUP_NAME_LENGTH} characters.")
-    if isinstance(start_balance, (bool, float)) or not isinstance(start_balance, (int, Decimal)):
-        raise AuthError("Start balance must be a whole number or Decimal.")
-    start_balance = Decimal(start_balance)
-    if (not start_balance.is_finite() or start_balance <= 0
-            or start_balance != start_balance.quantize(CENT)):
-        raise AuthError("Start balance must be positive, with at most 2 decimals.")
-    start_balance = start_balance.quantize(CENT)
     with storage.transaction(path) as data:
         _find_user(data, user_id)
         group = Group(id=uuid.uuid4().hex, name=name, admin_id=user_id,
-                      invite_code=_new_invite_code(data), start_balance=start_balance)
-        _add_membership(data, user_id, group.id, ROLE_ADMIN, start_balance)
+                      invite_code=_new_invite_code(data))
+        _add_membership(data, user_id, group.id, ROLE_ADMIN)
         data["groups"].append(group_to_dict(group))
     return group
 
@@ -236,9 +224,9 @@ def create_group(
 def join_group(user_id: str, invite_code: str, path=None) -> Group:
     """Add the user to the group with this invite code as a member.
 
-    The code ignores case and surrounding spaces. The new member gets the
-    group's start balance. The user may already be in other groups, but not
-    in this one.
+    The code ignores case and surrounding spaces. The new member starts at 0
+    and gets coins with the admin's next top-up (requirements 2.4). The user
+    may already be in other groups, but not in this one.
     """
     code = invite_code.strip().upper() if isinstance(invite_code, str) else ""
     with storage.transaction(path) as data:
@@ -247,7 +235,7 @@ def join_group(user_id: str, invite_code: str, path=None) -> Group:
         if group is None:
             raise AuthError("No group has that invite code.")
         joined = group_from_dict(group)
-        _add_membership(data, user_id, joined.id, ROLE_MEMBER, joined.start_balance)
+        _add_membership(data, user_id, joined.id, ROLE_MEMBER)
     return joined
 
 

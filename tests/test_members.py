@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import pytest
 
-from src import auth, members, notifications, service, storage
+from src import auth, balances, members, notifications, service, storage
 from src.auth import AuthError
 from src.models import User
 
@@ -33,8 +33,9 @@ def group(path):
     anna = auth.sign_up("anna", PASSWORD, path).id
     ben = auth.sign_up("ben", PASSWORD, path).id
     carl = auth.sign_up("carl", PASSWORD, path).id
-    friends = auth.create_group(anna, "Friends", Decimal("500"), path)
+    friends = auth.create_group(anna, "Friends", path=path)
     auth.join_group(ben, friends.invite_code, path)
+    balances.top_up(anna, friends.id, 500, NOW, path)
     return anna, ben, carl, friends
 
 
@@ -182,6 +183,7 @@ def test_deleting_one_group_keeps_the_others(path, group):
     anna, ben, carl, friends = group
     others = auth.create_group(carl, "Others", path=path)
     auth.join_group(ben, others.invite_code, path)
+    balances.top_up(carl, others.id, 100, NOW, path)
     kept = service.create_event(carl, "Kept event", CLOSE, NOW, path=path)
     solo = auth.create_group(anna, "Solo", path=path)
     members.delete_group(anna, solo.id, path)

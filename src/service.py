@@ -141,6 +141,7 @@ class LeaderboardRow:
     is_admin: bool = False
     open_bets: int = 0
     avatar: str = ""
+    received: Decimal = Decimal("0")
 
 
 # --- loading and saving -------------------------------------------------------
@@ -386,6 +387,7 @@ def _leaderboard(state: _State, user: User) -> List[LeaderboardRow]:
             rank=rank, username=member.username, balance=member.balance,
             is_admin=auth.is_group_admin(member, user.group_id),
             open_bets=open_bets.get(member.id, 0), avatar=member.avatar,
+            received=member.received,
         ))
     return rows
 
