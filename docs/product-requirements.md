@@ -128,6 +128,7 @@ Methods considered and not chosen:
 - If the flags alone are already more than 50% of the members (for example 2 flags in a group of 3), the event is deleted straight away without a poll, and all stakes are refunded.
 - The admin can also open a poll directly at any time, without the flag threshold.
 - All members can vote "delete" or "keep" in the poll. Each member has one vote.
+- Every member who flagged the event starts the poll with a "delete" vote (also when the admin opens the poll). They may switch it to "keep" once; after that, their vote is final.
 - The poll runs 1 hour. If betting closes sooner than that, the poll ends halfway to the close time (for example 30 minutes when 1 hour is left), so it never runs into the deadline.
 - When it ends: if more than 50% of the votes cast are "delete", the event is deleted and every stake is refunded. Otherwise the event stays, the flags are cleared, and betting resumes. A tie means the event stays. If nobody votes, the poll closes as "keep" and betting resumes.
 - Restricted members (see 2.2) do not count as members for the 25% and 50% flag thresholds.
@@ -310,7 +311,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Users can only see and act on events in their own group.
 
 ### 5.3 Fair play
-- One flag per member per event, and one vote per member per poll.
+- One flag per member per event, and one vote per member per poll (a flag counts as a "delete" vote, which may be switched to "keep" once).
 - No bets after an event is closed or paused. Betting on both sides of an event is allowed.
 - The creator cannot silently change the outcome after it is resolved, so resolved events are read-only.
 - Abuse of events is handled by the poll process. Abuse by the admin is a limit of the design, since the admin has full control, and the group should agree to trust them.
@@ -359,6 +360,7 @@ This is a learning project with virtual coins, so the goal is sensible basics an
 - Multiple groups per user: in scope, with a balance and role per group.
 - Flag threshold for auto-poll: 25% of members, minimum 2 flags. If the flags are already more than 50% of the members, the event is deleted without a poll.
 - Poll duration: 1 hour, or halfway to the betting close if that comes sooner.
+- Flags in a poll: each flag counts as a "delete" vote; the flagger may switch it to "keep" once.
 - Deleting an event: creator or admin, only more than 3 hours before betting closes, stakes refunded.
 - No bets on the winning side, or only one side has bets: refund all stakes.
 - Names events (bets on one of several names): in scope; 2 to 10 names, fixed once the event is created; one winner or several can win; the pool is split between the bets on the winning names, and if nobody backed a winner, all stakes are refunded.

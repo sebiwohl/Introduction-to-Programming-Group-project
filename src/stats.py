@@ -38,7 +38,8 @@ PAUSED = "paused"
 
 CLOSING_SOON = timedelta(hours=12)  # the "Closing soon" tab (decided: 12 hours)
 COUNTDOWN_URGENT = timedelta(hours=3)  # the countdown turns red this close to the close (3.2)
-FEED_FILTERS = ("All", "Hot bets", "Open", "Closing soon", "Awaiting result", "Done")
+FEED_FILTERS = ("Open", "Hot bets", "Closing soon", "Awaiting result", "Past bets")
+# Open is the first tab and the default. "Done" (old name of "Past bets") and "All" still work.
 # An open event is "hot" when at least half the group has bet on it (and never fewer than 2 people).
 HOT_SHARE = 0.5
 HOT_MIN_BETTORS = 2
@@ -270,13 +271,13 @@ def filter_events(summaries: List[EventSummary], choice: str, now: datetime,
     def keep(summary: EventSummary) -> bool:
         """Return True if the event belongs in the chosen tab."""
         status = summary.event.status
-        if choice == "Open":
-            return status == STATUS_OPEN
+        if choice == "Open":  # paused events too: their poll is waiting for votes
+            return status in (STATUS_OPEN, STATUS_PAUSED)
         if choice == "Closing soon":
             return status == STATUS_OPEN and summary.event.close_time - now <= CLOSING_SOON
         if choice == "Awaiting result":
             return status == STATUS_CLOSED
-        if choice == "Done":
+        if choice in ("Past bets", "Done"):
             return status == STATUS_RESOLVED
         return True
     return [s for s in summaries if keep(s)]

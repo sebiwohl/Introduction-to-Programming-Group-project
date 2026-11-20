@@ -57,7 +57,7 @@ def load_page(now: datetime) -> Optional[PageData]:
     try:
         with timed("load page data"):
             return service.page_data(user_id, now,
-                                     group_id=st.session_state.get(account.GROUP_KEY))
+                                     group_id=account.chosen_group())
     except BettingError:
         st.session_state.pop(account.USER_KEY, None)
         return None

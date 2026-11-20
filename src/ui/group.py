@@ -1,5 +1,6 @@
-"""The Group page: members and balances, the invite code, the rules and the account box."""
+"""The Group page: members and balances, the invite code, How it works and leaving the group."""
 
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -11,17 +12,55 @@ from src.models import ROLE_ADMIN
 from src.storage import StorageError
 from src.service import PageData
 from src.ui import style
-from src.ui.account import log_out
 from src.ui.actions import attempt
 
-RULES = (
-    "Odds come from the group: winners split the whole pool in proportion to their stakes.",
-    "If only one side has bets, everyone gets their stake back.",
-    "Names events: everyone who backed a winning name shares the whole pool. "
-    "If nobody backed a winner, everyone gets their stake back.",
-    "Betting stops at the close time. Then the creator or the admin sets the result.",
-    "Coins are virtual. Nobody can bet more than their balance.",
+# The "How it works" box: one page per topic, turned with the side arrows or every few seconds.
+HOW_IT_WORKS = (
+    ("Group", (
+        "Everyone joins with 0 coins. The admin tops up every member at once with the same "
+        "amount, new members included.",
+        "You need coins to create events or bet, and a balance never goes below 0.",
+        "Repayment on the Leaderboard shows who is up or down since the last repayment and "
+        "who pays whom. The paying happens outside the app.",
+        "Once everyone has paid, the admin presses Repaid: a new period starts with a fresh "
+        "top-up. Open bets carry over.",
+        "You can leave with no open bets and a result of 0 since the last repayment.",
+    )),
+    ("Betting", (
+        "There is no bookmaker: odds = the whole pool ÷ the stakes on that side. Winners split "
+        "the whole pool in proportion to their stakes.",
+        "Three types: Yes / no, Names (2 to 10 names, one or several can win) and "
+        "Over / under a number.",
+        "Betting stops at the close time. After the event date the creator or the admin sets "
+        "the result, and that cannot be undone.",
+        "If only one side has bets or nobody backed the winner, everyone gets their stake back. "
+        "Exactly on an over / under line refunds too.",
+        "The creator or the admin can delete an event up to 3 hours before betting closes, "
+        "with every stake refunded. After that, only a poll can remove it.",
+    )),
+    ("Moderation", (
+        "Something fishy? Flag the event in its ⋮ menu. One flag per member.",
+        "When 25% of the members (at least 2) flag it, betting pauses and the group votes in a "
+        "poll for 1 hour (shorter if betting closes sooner).",
+        "If more than half of the members flag it, the event is deleted at once and every "
+        "stake is refunded.",
+        "Your flag counts as a Delete vote; you can switch it to Keep once. Everyone else "
+        "has one vote.",
+        "More than half of the votes for Delete removes the event with refunds. A tie or no "
+        "votes keeps it, clears the flags and reopens betting.",
+    )),
+    ("Admin", (
+        "Shares the invite code, tops up everyone and confirms Repaid.",
+        "Can open a poll directly, set the result of any event and delete any event (same "
+        "3-hour rule).",
+        "Can restrict a member's betting and lift it again, and remove members with no open "
+        "bets and a result of 0.",
+        "Hands the admin role to another member before leaving. As the last member, the "
+        "admin can delete the group.",
+    )),
 )
+HOWTO_PAGE_KEY, HOWTO_TURNED_KEY = "howto_page", "howto_turned_at"
+HOWTO_SECONDS = 12  # the box turns to the next page this often, unless someone just clicked
 
 
 def _members_card(page: PageData) -> str:
@@ -145,38 +184,66 @@ def _delete_group_form(page: PageData) -> None:
                 st.rerun()  # shows the success or the error message
 
 
-def _leave_form(page: PageData) -> None:
-    """Draw the form to leave the group; the rules are checked in members.leave_group."""
-    with st.form("leave_group"):
+@st.dialog("Leave the group?")
+def _confirm_leave(page: PageData) -> None:
+    """Ask before leaving the group; the rules are checked in members.leave_group."""
+    style.show(f'<div style="font-weight:800;font-size:1.05rem">'
+               f"Do you really want to leave {style.esc(page.group.name)}?</div>"
+               '<p class="ci-muted" style="margin-top:8px">To come back you need the '
+               "invite code again.</p>")
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="leave_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Yes, leave", key="leave_confirm", type="primary", width="stretch"):
+        attempt(lambda: members.leave_group(page.user.id, page.group.id, _now()),
+                f"You left {page.group.name}.")
+        st.rerun()  # shows the success or the error message
+
+
+def _leave_box(page: PageData) -> None:
+    """Draw the Leave the group box; the red button asks for confirmation in a pop-up."""
+    with st.container(key="card_leave"):
         style.show('<div class="ci-label">Leave the group</div>')
         st.caption("Possible with no open bets and a result of 0 since the last repayment. "
                    "The admin hands over the role first.")
-        sure = st.checkbox("Yes, I want to leave")
-        if st.form_submit_button("Leave group"):
-            if not sure:
-                st.error("Tick the box to confirm.")
-            else:
-                attempt(lambda: members.leave_group(page.user.id, page.group.id, _now()),
-                        f"You left {page.group.name}.")
-                st.rerun()  # shows the success or the error message
+        if st.button("Leave group", key="leave_group_btn", icon=":material/logout:"):
+            _confirm_leave(page)
 
 
-def _rules_card() -> str:
-    """Return the card with the group rules the app enforces today."""
-    rules = "".join(f"<p>{style.esc(rule)}</p>" for rule in RULES)
-    return (f'<div class="ci-card ci-rules"><div class="ci-label" style="margin-bottom:10px">'
-            f"Group rules</div>{rules}</div>")
+def _turn_howto(step: int) -> None:
+    """Go to the next (1) or previous (-1) How it works page and restart the timer."""
+    page = st.session_state.get(HOWTO_PAGE_KEY, 0)
+    st.session_state[HOWTO_PAGE_KEY] = (page + step) % len(HOW_IT_WORKS)
+    st.session_state[HOWTO_TURNED_KEY] = time.monotonic()
 
 
-def _account_card(page: PageData) -> None:
-    """Draw the account box with the username, role and the log-out button."""
-    role = "admin" if page.user.role == ROLE_ADMIN else "member"
-    with st.container(key="card_account"):
-        style.show(f'<div class="ci-label">Your account</div><div style="margin:8px 0 2px"><b>'
-                   f"Signed in as {style.esc(page.user.username)}</b></div>"
-                   f'<div class="ci-muted">You are a {role} of this group.</div>')
-        if st.button("Log out", key="logout_group"):
-            log_out()
+def _howto_markup(index: int) -> str:
+    """Return the inside of the How it works box for one page, with the page dots."""
+    title, lines = HOW_IT_WORKS[index]
+    items = "".join(f"<p>{style.esc(line)}</p>" for line in lines)
+    dots = "".join(f'<span class="ci-dot{" ci-dot-on" if i == index else ""}"></span>'
+                   for i in range(len(HOW_IT_WORKS)))
+    return (f'<div class="ci-label">How it works</div>'
+            f'<div class="ci-howto-title">{style.esc(title)}</div>'
+            f'<div class="ci-howto">{items}</div><div class="ci-dots">{dots}</div>')
+
+
+@st.fragment(run_every=HOWTO_SECONDS)
+def _how_it_works() -> None:
+    """Draw the How it works box: the arrows next to the page dots turn the page.
+
+    A fragment with its own timer: only this box is redrawn, and it turns to the
+    next page by itself when nobody has clicked for HOWTO_SECONDS.
+    """
+    turned = st.session_state.setdefault(HOWTO_TURNED_KEY, time.monotonic())
+    if time.monotonic() - turned >= HOWTO_SECONDS - 0.5:
+        _turn_howto(1)
+    with st.container(key="card_howto"):
+        st.button(":material/chevron_left:", key="howto_prev",
+                  on_click=_turn_howto, args=(-1,))
+        st.button(":material/chevron_right:", key="howto_next",
+                  on_click=_turn_howto, args=(1,))
+        style.show(_howto_markup(st.session_state.get(HOWTO_PAGE_KEY, 0)))
 
 
 def group_page(page: PageData) -> None:
@@ -194,6 +261,5 @@ def group_page(page: PageData) -> None:
         _manage_members(page)
     with right:
         _invite_card(page)
-        style.show(_rules_card())
-        _account_card(page)
-        _leave_form(page)
+        _how_it_works()
+        _leave_box(page)

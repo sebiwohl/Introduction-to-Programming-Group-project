@@ -158,3 +158,13 @@ def test_bet_records_carry_their_group_so_stats_can_be_per_group(path, two_group
     assert sorted(r.group_id for r in page.my_bets) == sorted([friends, work])  # all groups
     in_work = [r for r in page.my_bets if r.group_id == work]
     assert stats.profile_stats(in_work, page.events, ids["ben"]).bets == 1
+
+
+def test_my_bets_has_the_events_of_bets_in_every_group(path, two_groups):
+    ids, friends, work = two_groups
+    for creator in ("anna", "carl"):
+        event = service.create_event(ids[creator], f"{creator} event", CLOSE, NOW, path=path)
+        service.place_bet(ids["ben"], event.id, "yes", Decimal("5"), NOW, path)
+    page = service.page_data(ids["ben"], NOW, path, group_id=work)
+    assert [s.event.title for s in page.events] == ["carl event"]  # the feed: Work only
+    assert sorted(s.event.title for s in page.bet_events.values()) == ["anna event", "carl event"]

@@ -98,6 +98,7 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-pill-refunded {border-color: var(--ci-line); color: var(--ci-text);}
 .ci-pill-yes {background: var(--ci-yes-soft); color: var(--ci-yes);}
 .ci-pill-no {background: var(--ci-no-soft); color: var(--ci-no);}
+.ci-pill-mine {background: var(--ci-yes); color: #FFFFFF;}
 .ci-admin {display: inline-flex; align-items: center; gap: 3px; background: var(--ci-ink);
   color: #FFFFFF; border-radius: 4px; padding: 1px 6px; font-size: 0.6rem; font-weight: 800;
   letter-spacing: 0.06em; vertical-align: middle; margin-left: 6px;}
@@ -152,10 +153,26 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 [class*="st-key-no_"] button:hover {border-color: var(--ci-no); color: var(--ci-no);}
 [class*="st-key-ev_"] [data-testid="stForm"], [class*="st-key-wait_"] [data-testid="stForm"] {
   padding: 0; border: none;}
-[class*="st-key-bets_"] details {border: none !important; background: transparent;}
-[class*="st-key-bets_"] summary {display: inline-flex; width: auto; padding: 4px 14px;
-  border: 1px solid var(--ci-line); border-radius: 999px; font-size: 0.82rem; font-weight: 600;}
-[class*="st-key-bets_"] [data-testid="stExpanderDetails"] {padding: 10px 0 0;}
+/* "See who bet": a small round button in the middle of a line, the arrow below the text */
+[class*="st-key-bets_"] details {border: none !important; background: transparent; overflow: hidden;}
+[class*="st-key-bets_"] summary {position: relative; display: flex; width: fit-content;
+  margin: 2px auto 0; padding: 4px 16px 0; border: 1px solid var(--ci-line); border-radius: 999px;
+  background: #FFFFFF; list-style: none; overflow: visible !important;}
+[class*="st-key-bets_"] summary::before, [class*="st-key-bets_"] summary::after {content: "";
+  position: absolute; top: 50%; width: 2000px; border-top: 1px solid var(--ci-line);}
+[class*="st-key-bets_"] summary::before {right: calc(100% + 1px);}
+[class*="st-key-bets_"] summary::after {left: calc(100% + 1px);}
+[class*="st-key-bets_"] summary:hover {border-color: var(--ci-brand);}
+[class*="st-key-bets_"] summary > span {flex-direction: column; align-items: center; gap: 0;}
+[class*="st-key-bets_"] summary > span > span:first-child {order: 2; margin: -2px 0 0;}
+[class*="st-key-bets_"] summary p {font-size: 0.72rem; font-weight: 600; margin: 0; line-height: 1.2;}
+[class*="st-key-bets_"] summary [data-testid="stIconMaterial"] {font-size: 1rem;
+  color: var(--ci-muted); transition: transform .15s;}
+[class*="st-key-bets_"] details:not([open]) summary [data-testid="stIconMaterial"] {
+  transform: rotate(90deg);}  /* the closed arrow points right: turn it down */
+[class*="st-key-bets_"] details[open] summary [data-testid="stIconMaterial"] {
+  transform: rotate(180deg);}  /* the open arrow points down: turn it up */
+[class*="st-key-bets_"] [data-testid="stExpanderDetails"] {padding: 10px 0 0; border: none !important;}
 .ci-sides {display: grid; grid-template-columns: 1fr 1fr; gap: 10px;}
 .ci-side {background: var(--ci-soft); border-radius: 12px; padding: 12px 14px;}
 .ci-side-row {display: flex; justify-content: space-between; align-items: center;
@@ -257,14 +274,69 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   padding: 16px 18px; gap: 0.4rem;}
 .st-key-invite .ci-kicker {color: #B4B4BC;}
 .st-key-invite [data-testid="stCode"] pre {background: transparent; padding: 0;}
+/* the copy button sits on the "Invite friends" line, so it never covers the code */
+.st-key-invite [data-testid="stCode"] div:has(> div > [data-testid="stElementToolbarButton"]) {
+  top: -34px !important; right: 0 !important;}
+.st-key-invite [data-testid="stCode"] div:has(> [data-testid="stElementToolbarButton"]) {
+  background: transparent !important; box-shadow: none !important; border: none !important;}
 .st-key-invite [data-testid="stCode"] code {color: #FFFFFF; font-family: "Inter", sans-serif !important;
   font-size: 2.2rem; font-weight: 900; letter-spacing: 0.04em;}
-.st-key-invite [data-testid="stCode"] button {filter: invert(1);}
+/* the copy button: white on the orange card, always visible */
+.st-key-invite [data-testid="stCode"] button {filter: none; opacity: 1 !important;
+  background: rgba(255, 255, 255, 0.22) !important; color: #FFFFFF !important; border-radius: 8px;}
+.st-key-invite [data-testid="stCode"] button:hover {background: rgba(255, 255, 255, 0.38) !important;}
+.st-key-invite [data-testid="stCode"] div:has(button), .st-key-invite [data-testid="stCode"] button,
+.st-key-invite [data-testid="stCode"] span:has(> button) {opacity: 1 !important;
+  visibility: visible !important;}
 .ci-member {display: flex; align-items: center; gap: 12px; padding: 9px 0;
   border-bottom: 1px solid var(--ci-line);}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
-.ci-rules p {font-size: 0.86rem; margin: 0 0 8px;}
+/* messages after an action: a card floating at the top of the screen, fading out by itself */
+.ci-flash {position: fixed; top: 18px; left: 50%; z-index: 1000100; display: flex; gap: 10px;
+  align-items: flex-start; width: max-content; max-width: min(460px, calc(100vw - 32px));
+  padding: 12px 16px; border-radius: 14px; background: #FFFFFF; color: var(--ci-text);
+  border: 1px solid var(--ci-line); box-shadow: 0 12px 32px rgba(17, 17, 17, 0.18);
+  font-size: 0.9rem; line-height: 1.4; font-weight: 600; pointer-events: none;
+  animation: ci-flash-in 0.3s ease-out, ci-flash-out 0.5s ease-in 4.5s forwards;}
+.ci-flash-error {animation: ci-flash-in 0.3s ease-out, ci-flash-out 0.5s ease-in 8s forwards;
+  border-color: #FDA29B;}
+.ci-flash-success {border-color: #A6F4C5;}
+.ci-flash-icon {flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; color: #FFFFFF; font-weight: 900; font-size: 0.8rem;}
+.ci-flash-success .ci-flash-icon {background: #12B76A;}
+.ci-flash-error .ci-flash-icon {background: #D92D20;}
+.ci-flash-text {white-space: normal; overflow-wrap: anywhere;}
+@keyframes ci-flash-in {from {opacity: 0; transform: translate(-50%, -16px);}
+  to {opacity: 1; transform: translate(-50%, 0);}}
+@keyframes ci-flash-out {from {opacity: 1; transform: translate(-50%, 0);}
+  to {opacity: 0; transform: translate(-50%, -16px); visibility: hidden;}}
+.ci-flash {transform: translate(-50%, 0);}
+/* the "?" hints next to some fields: a small dark card with the app's font */
+[data-testid="stTooltipContent"] {background: var(--ci-ink) !important; color: #FFFFFF !important;
+  font-family: "Inter", sans-serif !important; font-size: 0.8rem !important; line-height: 1.45;
+  border-radius: 10px !important; padding: 8px 12px !important; max-width: 260px !important;
+  white-space: normal !important; box-shadow: 0 10px 24px rgba(17, 17, 17, 0.2);}
+[data-testid="stTooltipContent"] * {color: #FFFFFF !important; font-size: 0.8rem !important;
+  margin: 0 !important;}
+/* How it works: pages turned by the arrows beside the dots at the bottom (never over the text) */
+.st-key-card_howto {position: relative; padding-bottom: 18px;}
+.st-key-howto_prev, .st-key-howto_next {position: absolute; bottom: 6px; width: 32px; height: 30px;
+  z-index: 2; margin: 0 !important;}
+.st-key-howto_prev {left: 10px;} .st-key-howto_next {right: 10px;}
+.st-key-howto_prev *:has(button), .st-key-howto_next *:has(button), .st-key-howto_prev button,
+.st-key-howto_next button {height: 100% !important; width: 100% !important;}
+.st-key-howto_prev button, .st-key-howto_next button {background: transparent !important;
+  border: none !important; box-shadow: none !important; border-radius: 8px; padding: 0;
+  min-height: 0; color: var(--ci-muted) !important; justify-content: center; align-items: center;}
+.st-key-howto_prev button:hover, .st-key-howto_next button:hover {color: var(--ci-brand) !important;
+  background: var(--ci-brand-soft) !important;}
+.st-key-howto_prev button span, .st-key-howto_next button span {font-size: 1.4rem !important;}
+.ci-howto-title {font-weight: 800; font-size: 0.95rem; margin: 8px 0 4px;}
+.ci-howto p {font-size: 0.8rem; line-height: 1.45; margin: 0 0 6px;}
+.ci-dots {display: flex; justify-content: center; gap: 6px; margin-top: 12px;}
+.ci-dot {width: 7px; height: 7px; border-radius: 50%; background: var(--ci-line);}
+.ci-dot-on {background: var(--ci-brand); width: 18px; border-radius: 4px;}
 .ci-profile {display: flex; align-items: center; gap: 16px;}
 .ci-tiles + .ci-tiles-more {margin-top: -12px;}
 .ci-rolling {display: inline-flex; align-items: flex-start; line-height: 1;}
@@ -372,10 +444,12 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-podium .ci-animal {font-size: 1.4rem;}
 .st-key-card_profile [data-testid="stHorizontalBlock"] {align-items: center;}
 .st-key-avatars button {padding: 2px 0 !important; min-height: 56px;}
-.st-key-logout_profile button {background: #D92D20 !important; border-color: #D92D20 !important;
-  color: #FFFFFF !important;}
-.st-key-logout_profile button:hover {background: #B42318 !important; border-color: #B42318 !important;}
-.st-key-logout_profile button p, .st-key-logout_profile button span {color: #FFFFFF !important;}
+.st-key-logout_profile button, .st-key-leave_group_btn button {background: #D92D20 !important;
+  border-color: #D92D20 !important; color: #FFFFFF !important;}
+.st-key-logout_profile button:hover, .st-key-leave_group_btn button:hover {background: #B42318 !important;
+  border-color: #B42318 !important;}
+.st-key-logout_profile button p, .st-key-logout_profile button span,
+.st-key-leave_group_btn button p, .st-key-leave_group_btn button span {color: #FFFFFF !important;}
 .st-key-avatars button p {font-size: 2rem !important; line-height: 1.2;}
 .ci-profile-name {font-size: 1.5rem; font-weight: 900; letter-spacing: -0.02em;
   display: flex; align-items: center; gap: 8px;}
@@ -474,6 +548,9 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   border-radius: 18px; box-shadow: var(--ci-shadow); padding: 18px 20px;}
 [class*="st-key-ev_"] [data-testid="stForm"], [class*="st-key-wait_"] [data-testid="stForm"] {
   background: transparent; box-shadow: none; border: none !important; padding: 0;}
+/* the Repaid form sits inside the repayment card: no second card around it */
+.st-key-card_repayment [data-testid="stForm"] {background: transparent; box-shadow: none;
+  border: none !important; padding: 0;}
 [data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
 [data-testid="stTextAreaRootElement"], [data-testid="stDateInputField"],
 [data-baseweb="input"], [data-baseweb="input"] > div, [data-baseweb="input"] input,
@@ -486,6 +563,133 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 /* top menu: orange underline and text on the open page */
 .st-key-nav [data-testid="stRadioOption"][data-selected="true"] {border-bottom-color: var(--ci-brand);}
 .st-key-nav [data-testid="stRadioOption"][data-selected="true"] p {color: var(--ci-brand);}
+/* the menu in two parts: the group block (dropdown + Feed, Leaderboard, Group) and my pages */
+[class*="st-key-nav_"] [role="radiogroup"] {flex-wrap: nowrap; gap: 2px;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] {margin: 0; cursor: pointer; padding: 6px 10px;
+  border-bottom: 2px solid transparent;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] > div > div:first-child {display: none;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] p {color: var(--ci-muted); font-weight: 500;
+  white-space: nowrap;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"][data-selected="true"] {
+  border-bottom-color: var(--ci-brand);}
+[class*="st-key-nav_"] [data-testid="stRadioOption"][data-selected="true"] p {
+  color: var(--ci-brand); font-weight: 700;}
+/* one row: logo, group dropdown + group pages, divider, my pages, then coins, bell, New event */
+.st-key-toprow {flex-wrap: wrap; row-gap: 6px !important;}
+.st-key-toprow > div {width: auto !important; flex: 0 0 auto !important;}
+.st-key-toprow > div:has(.ci-topstats) {margin-left: auto;}
+.st-key-navgroup {flex-wrap: nowrap; margin-left: 12px;}
+.st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 6px;}
+.st-key-navgroup > div:first-child {flex: 0 0 auto !important; width: auto !important;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] {padding: 6px 8px;}
+/* the group dropdown: a round white field like the bell and the buttons next to it */
+.st-key-groupsel {width: 150px !important; min-width: 150px; flex: 0 0 auto;}
+.st-key-groupsel [data-baseweb="select"] > div, .st-key-groupsel [data-testid="stSelectbox"] [role="group"] {
+  background: #FFFFFF !important; border: 1px solid var(--ci-line) !important;
+  border-radius: 999px !important; min-height: 36px; padding-left: 6px; box-shadow: none !important;}
+.st-key-groupsel [data-testid="stSelectbox"] [role="group"]:hover {border-color: #FDBA74 !important;}
+.st-key-groupsel [data-testid="stSelectbox"] input, .st-key-groupsel [data-baseweb="select"] span {
+  color: var(--ci-ink) !important; font-weight: 600; font-size: 0.9rem;}
+.st-key-groupsel [data-testid="stSelectbox"] svg {color: var(--ci-muted); fill: var(--ci-muted);}
+/* too narrow for one row: logo, coins, bell and New event first, the page tabs below */
+@media (max-width: 1180px) {
+  .st-key-toprow::after {content: ""; order: 5; flex-basis: 100%; height: 0;}
+  .st-key-toprow > div:has(.st-key-navgroup), .st-key-navgroup,
+  .st-key-toprow > div:has(.st-key-navme), .st-key-navme {order: 6;}
+  .st-key-navgroup {margin-left: 0;}
+}
+@media (max-width: 640px) {
+  .st-key-navgroup {flex-wrap: wrap; row-gap: 4px !important;}
+  .st-key-navme {border-left: none; padding-left: 0;}
+  [class*="st-key-nav_"] [role="radiogroup"] {flex-wrap: wrap;}
+}
+/* choices drawn as equal round buttons (New event: Type, Who can win), like the member chips */
+[class*="st-key-choice_"] [role="radiogroup"] {display: grid !important; grid-auto-flow: column;
+  grid-auto-columns: 1fr; gap: 10px; width: 100%;}
+[class*="st-key-choice_"] [data-testid="stElementContainer"],
+[class*="st-key-choice_"] [data-testid="stRadio"] {width: 100% !important;}
+[class*="st-key-choice_"] [role="radiogroup"] > div {display: flex; width: 100%;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] {width: 100%;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] > div {flex: 1 1 auto; display: flex;
+  justify-content: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] {
+  width: 100%; text-align: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] {justify-content: center; margin: 0;
+  border: 1px solid var(--ci-line); border-radius: 999px; padding: 8px 12px; background: #FFFFFF;
+  cursor: pointer; transition: background .15s, border-color .15s;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] > div > div:first-child {display: none;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"] p {font-weight: 600; text-align: center;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"]:hover {border-color: #FDBA74;}
+[class*="st-key-choice_"] [data-testid="stRadioOption"][data-selected="true"] {
+  background: var(--ci-brand-soft); border-color: var(--ci-brand);}
+[class*="st-key-choice_"] [data-testid="stRadioOption"][data-selected="true"] p {
+  color: var(--ci-brand);}
+/* the small box with the custom close day and time, next to the Betting closes dropdown */
+.st-key-custom_close {background: #FFF7ED; border-color: #FED7AA !important; padding: 8px 12px;}
+/* open events: the odds boxes are buttons that open the bet window */
+[class*="st-key-oddyes_"] button, [class*="st-key-oddno_"] button {width: 76px; min-height: 60px;
+  border-radius: 12px !important; padding: 6px 4px !important; transition: transform .12s;}
+[class*="st-key-oddyes_"] button {background: var(--ci-yes-soft) !important;
+  border: 1px solid #FBE3A6 !important;}
+[class*="st-key-oddno_"] button {background: var(--ci-no-soft) !important;
+  border: 1px solid #F6D3BF !important;}
+[class*="st-key-oddyes_"] button:hover, [class*="st-key-oddno_"] button:hover {
+  transform: translateY(-2px); box-shadow: 0 6px 14px rgba(154, 52, 18, .14);}
+[class*="st-key-oddyes_"] button p, [class*="st-key-oddno_"] button p {font-size: 0.62rem;
+  font-weight: 800; letter-spacing: 0.08em; color: var(--ci-muted); line-height: 1.3;}
+[class*="st-key-oddyes_"] button p strong, [class*="st-key-oddno_"] button p strong {
+  display: block; font-size: 1.3rem; letter-spacing: 0; line-height: 1.2;}
+[class*="st-key-oddyes_"] button p strong {color: var(--ci-yes);}
+[class*="st-key-oddno_"] button p strong {color: var(--ci-no);}
+/* open names events: the usual row, with an invisible button over it that opens the bet window */
+[class*="st-key-optrow_"] {position: relative; gap: 0;}
+[class*="st-key-optrow_"] .ci-opts {margin: 0;}
+[class*="st-key-optrow_"] [data-testid="stElementContainer"]:has(button) {position: absolute;
+  inset: 0; z-index: 2; width: 100% !important; height: 100%;}
+[class*="st-key-optrow_"] [data-testid="stElementContainer"]:has(button) > div,
+[class*="st-key-optrow_"] button {width: 100% !important; height: 100% !important;
+  opacity: 0; cursor: pointer;}
+[class*="st-key-optrow_"] .ci-opt {transition: border-color .15s, transform .15s, box-shadow .15s;}
+[class*="st-key-optrow_"]:hover .ci-opt {border-color: var(--ci-brand); transform: translateY(-1px);
+  box-shadow: 0 6px 14px rgba(154, 52, 18, .12);}
+[class*="st-key-odds_"] {flex-wrap: nowrap !important;}
+[class*="st-key-odds_"] > div {width: auto !important; flex: 0 0 auto;}
+/* the ⋮ in the card's top-right corner, and its small menu that opens inside the card */
+[class*="st-key-ev_"], [class*="st-key-wait_"] {position: relative;}
+[class*="st-key-menu_"] {position: absolute !important; top: 8px; right: 8px; z-index: 5;
+  width: auto !important;}
+[class*="st-key-menu_"] button {min-height: 28px; height: 28px; width: 28px; padding: 0 !important;
+  border: none !important; background: transparent !important; box-shadow: none !important;}
+[class*="st-key-menu_"] button:hover {background: var(--ci-soft) !important;}
+[class*="st-key-menu_"] button [data-testid="stIconMaterial"] {color: var(--ci-muted);}
+[class*="st-key-menupanel_"] {position: absolute !important; top: 38px; right: 8px; z-index: 6;
+  width: 150px !important; gap: 4px; padding: 6px; background: #FFFFFF;
+  border: 1px solid var(--ci-line); border-radius: 12px; box-shadow: 0 10px 24px rgba(154, 52, 18, .16);}
+[class*="st-key-menupanel_"] button {min-height: 32px; padding: 2px 10px !important;
+  justify-content: flex-start !important; border: none !important; border-radius: 8px !important;
+  background: transparent !important;}
+[class*="st-key-menupanel_"] button:hover {background: var(--ci-soft) !important;}
+[class*="st-key-menupanel_"] button p {font-size: 0.82rem;}
+/* "N members flagged this" line with its Flag button */
+[class*="st-key-flagline_"] {flex-wrap: wrap; background: #FEF2F2; border: 1px solid #FECACA;
+  border-radius: 12px; padding: 6px 10px; margin: 2px 0;}
+[class*="st-key-flagline_"] > div {width: auto !important; flex: 0 1 auto;}
+[class*="st-key-flagline_"] > div:first-child {margin-right: auto;}
+.ci-flagnote {font-size: 0.8rem; font-weight: 600; color: #B91C1C;}
+[class*="st-key-flagtoo_"] button {min-height: 30px; padding: 0 12px !important;
+  border-color: #FCA5A5 !important; color: #B91C1C !important;}
+/* poll votes: thinner, striped, green (keep) and red (delete), unlike the bet bar */
+.ci-votes {margin: 4px 0 10px;}
+.ci-votes-labels {display: flex; justify-content: space-between; font-size: 0.68rem;
+  font-weight: 800; letter-spacing: 0.06em; color: var(--ci-muted); margin-bottom: 4px;}
+.ci-vote-keep {color: #15803D;} .ci-vote-delete {color: #B91C1C;}
+.ci-votebar {display: flex; gap: 3px; height: 6px; border-radius: 999px; background: #EEE;
+  overflow: hidden;}
+.ci-votebar-keep, .ci-votebar-delete {background-image: repeating-linear-gradient(135deg,
+  rgba(255, 255, 255, .35) 0 4px, transparent 4px 8px);}
+.ci-votebar-keep {background-color: #16A34A;} .ci-votebar-delete {background-color: #DC2626;}
+/* leave room for the ⋮ above the odds boxes */
+[class*="st-key-odds_"] {margin-top: 30px;}
 /* main buttons (New event, Bet, Save ...) in the orange gradient */
 [data-testid="stBaseButton-primary"] {background: var(--ci-grad) !important; border: none !important;
   box-shadow: 0 6px 16px rgba(234, 88, 12, .28); transition: transform .15s, box-shadow .15s;}

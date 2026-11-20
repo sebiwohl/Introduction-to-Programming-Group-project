@@ -1,4 +1,7 @@
-"""The My bets page: four stat tiles and the history of the user's bets."""
+"""The My bets page: the history of the user's bets in all their groups, with a Group column.
+
+The stats are on the Profile page, per group and period.
+"""
 
 from collections import Counter
 from typing import Dict, List
@@ -34,39 +37,6 @@ def _kicker(results: Counter, total: int) -> str:
              (stats.AWAITING, "awaiting result"), (stats.OPEN, "open"))
     parts = [_plural(total, "bet")] + [f"{results[r]} {label}" for r, label in names if results[r]]
     return " · ".join(parts)
-
-
-def _tiles(page: PageData, me: MemberStats, results: Counter) -> str:
-    """Return the Balance, In play, Hit rate and Best call tiles."""
-    mine = next((r for r in page.leaderboard if r.username == page.user.username), None)
-    change = mine.result if mine else page.user.balance - page.user.received
-    since = (f"{style.signed(change)} since last repayment · "
-             f"received {style.money(page.user.received)}")
-    waiting, open_count = results[stats.AWAITING], results[stats.OPEN] + results[stats.PAUSED]
-    play_parts = ([_plural(open_count, "open bet")] if open_count else []) + (
-        [f"{_plural(waiting, 'bet')} awaiting result"] if waiting else [])
-    play_note = " · ".join(play_parts) or "Nothing riding right now"
-    if me.hit_rate is None:
-        hit, hit_note = "—", "No settled calls yet"
-    else:
-        hit, hit_note = f"{round(me.hit_rate * 100)}%", f"{me.right} of {me.settled} settled calls right"
-    best = style.odds_text(me.best_odds)
-    best_note = style.esc(me.best_title) if me.best_odds else "Win a bet to set one"
-    best_number = style.big_number(f'<span class="ci-yes">{best}</span>')
-    return (
-        '<div class="ci-tiles ci-tiles-anim">'
-        f'<div class="ci-tile ci-tile-dark" style="--t:0"><div class="ci-kicker">Balance</div>'
-        f'{style.big_number(style.money(page.user.balance))}'
-        f'<div class="ci-muted">{since}</div></div>'
-        f'<div class="ci-tile ci-tile-warm" style="--t:1"><div class="ci-kicker">In play</div>'
-        f'{style.big_number(style.money(stats.in_play(page.my_bets)))}'
-        f'<div class="ci-muted">{play_note}</div></div>'
-        f'<div class="ci-tile" style="--t:2"><div class="ci-kicker">Hit rate</div>{style.big_number(hit)}'
-        f'<div class="ci-muted">{hit_note}</div></div>'
-        f'<div class="ci-tile" style="--t:3"><div class="ci-kicker">Best call</div>'
-        f'{best_number}<div class="ci-muted">{best_note}</div></div>'
-        "</div>"
-    )
 
 
 def _when_line(record: BetRecord, summary) -> str:
@@ -120,8 +90,9 @@ def _call_tag(record: BetRecord) -> str:
     return f"<b>{style.esc(_label(record))}</b>"
 
 
-def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> str:
-    """Return the history table, one row per bet."""
+def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary],
+                   groups: Dict[str, str]) -> str:
+    """Return the history table, one row per bet, with the group each bet was in."""
     rows = []
     for record in records:
         summary = by_id.get(record.bet.event_id)
@@ -132,12 +103,13 @@ def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> 
         rows.append(
             f"<tr{warm}><td><div class='ci-t-title'>{style.esc(record.event_title)}</div>"
             f'<div class="ci-muted" style="font-size:.75rem">{_when_line(record, summary)}</div></td>'
+            f'<td class="ci-muted">{style.esc(groups.get(record.group_id, "Former group"))}</td>'
             f"<td>{_call_tag(record)}&nbsp; <b>{style.money(record.bet.stake)}</b></td>"
             f"<td><b>{style.odds_text(odds)}</b></td>"
             f"<td>{_status_cell(record, result, summary)}</td>"
             f'<td class="ci-num">{_coins_cell(record, result, summary)}</td></tr>'
         )
-    head = ("<tr><th>Event</th><th>Your call</th><th>Odds</th><th>Status</th>"
+    head = ("<tr><th>Event</th><th>Group</th><th>Your call</th><th>Odds</th><th>Status</th>"
             '<th class="ci-num">Coins</th></tr>')
     return f'<div class="ci-table-wrap"><table class="ci-table">{head}{"".join(rows)}</table></div>'
 
@@ -145,8 +117,10 @@ def _history_table(records: List[BetRecord], by_id: Dict[str, EventSummary]) -> 
 def my_bets_page(page: PageData, me: MemberStats) -> None:
     """Draw the My bets page."""
     results = Counter(stats.bet_result(r) for r in page.my_bets)
-    style.show(style.heading("My bets", _kicker(results, len(page.my_bets))))
-    style.show(_tiles(page, me, results))
+    kicker = _kicker(results, len(page.my_bets))
+    if len(page.groups) > 1:
+        kicker += " · in all your groups"
+    style.show(style.heading("My bets", kicker))
     label_col, filter_col = st.columns([1, 3], vertical_alignment="center")
     style.show(where=label_col, markup='<div class="ci-label">History</div>')
     with filter_col:
@@ -159,6 +133,6 @@ def my_bets_page(page: PageData, me: MemberStats) -> None:
     if not records:
         st.info("No bets here yet." if choice == "All" else f"No bets in “{choice}”.")
         return
-    by_id = {s.event.id: s for s in page.events}
-    style.show(_history_table(records, by_id))
+    groups = {group.id: group.name for group in page.groups}
+    style.show(_history_table(records, page.bet_events, groups))
 

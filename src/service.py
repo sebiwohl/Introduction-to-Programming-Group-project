@@ -506,6 +506,7 @@ class PageData:
 
     new_wins are the user's wins announced since they last saw them (for the confetti).
     notifications are the user's own notifications, newest first (for the bell).
+    bet_events has the user's bets' events from all their groups (for My bets).
     period_start is when the group's current period began (its last repayment),
     or None before the first one; stats for "This period" count events whose
     betting closes from then on.
@@ -520,6 +521,14 @@ class PageData:
     notifications: List[Notification] = field(default_factory=list)
     groups: List[Group] = field(default_factory=list)
     period_start: Optional[datetime] = None
+    bet_events: Dict[str, EventSummary] = field(default_factory=dict)
+
+
+def _bet_events(state: _State, user: User) -> Dict[str, EventSummary]:
+    """Return {event id: summary} for every event the user bet on, in any of their groups."""
+    ids = {bet.event_id for bet in state.bets if bet.user_id == user.id}
+    return {event_id: _summarize(state, state.events[event_id], user)
+            for event_id in ids if event_id in state.events}
 
 
 def _period_start(data: dict, group_id: Optional[str]) -> Optional[datetime]:
@@ -559,6 +568,7 @@ def page_data(user_id: str, now: datetime, path=None,
         new_wins=_new_wins(data, state, user.id),
         notifications=notifications.user_notifications(data, user.id),
         period_start=_period_start(data, user.group_id),
+        bet_events=_bet_events(state, user),
     )
 
 

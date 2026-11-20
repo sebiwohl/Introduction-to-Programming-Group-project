@@ -10,6 +10,7 @@ from src.ui.actions import attempt, show_flash
 
 USER_KEY = "user_id"
 GROUP_KEY = "group_id"  # the group the user is looking at (they can be in several)
+NEXT_GROUP_KEY = "next_group_id"  # a group to switch to on the next run (after create or join)
 
 
 def _remember(user: User) -> None:
@@ -21,6 +22,7 @@ def log_out() -> None:
     """Forget the logged-in user and show the log-in page."""
     st.session_state.pop(USER_KEY, None)
     st.session_state.pop(GROUP_KEY, None)
+    st.session_state.pop(NEXT_GROUP_KEY, None)
     st.rerun()
 
 
@@ -69,8 +71,22 @@ def login_page() -> None:
 
 
 def _switch_to(group) -> None:
-    """Show this group from now on (after creating or joining it)."""
-    st.session_state[GROUP_KEY] = group.id
+    """Show this group from the next run on (after creating or joining it).
+
+    GROUP_KEY belongs to the group dropdown, which is already drawn in this
+    run, so the switch is noted here and made by chosen_group() next run.
+    """
+    st.session_state[NEXT_GROUP_KEY] = group.id
+
+
+def chosen_group():
+    """Return the group to show, first applying a switch noted by _switch_to.
+
+    Call before the group dropdown is drawn (app.load_page does).
+    """
+    if NEXT_GROUP_KEY in st.session_state:
+        st.session_state[GROUP_KEY] = st.session_state.pop(NEXT_GROUP_KEY)
+    return st.session_state.get(GROUP_KEY)
 
 
 def create_group_form(user: User) -> None:
