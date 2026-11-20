@@ -292,6 +292,33 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   border-bottom: 1px solid var(--ci-line);}
 .ci-member:last-child {border-bottom: none;}
 .ci-member-money {margin-left: auto; text-align: right;}
+/* messages after an action: a card floating at the top of the screen, fading out by itself */
+.ci-flash {position: fixed; top: 18px; left: 50%; z-index: 1000100; display: flex; gap: 10px;
+  align-items: flex-start; width: max-content; max-width: min(460px, calc(100vw - 32px));
+  padding: 12px 16px; border-radius: 14px; background: #FFFFFF; color: var(--ci-text);
+  border: 1px solid var(--ci-line); box-shadow: 0 12px 32px rgba(17, 17, 17, 0.18);
+  font-size: 0.9rem; line-height: 1.4; font-weight: 600; pointer-events: none;
+  animation: ci-flash-in 0.3s ease-out, ci-flash-out 0.5s ease-in 4.5s forwards;}
+.ci-flash-error {animation: ci-flash-in 0.3s ease-out, ci-flash-out 0.5s ease-in 8s forwards;
+  border-color: #FDA29B;}
+.ci-flash-success {border-color: #A6F4C5;}
+.ci-flash-icon {flex: 0 0 22px; height: 22px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; color: #FFFFFF; font-weight: 900; font-size: 0.8rem;}
+.ci-flash-success .ci-flash-icon {background: #12B76A;}
+.ci-flash-error .ci-flash-icon {background: #D92D20;}
+.ci-flash-text {white-space: normal; overflow-wrap: anywhere;}
+@keyframes ci-flash-in {from {opacity: 0; transform: translate(-50%, -16px);}
+  to {opacity: 1; transform: translate(-50%, 0);}}
+@keyframes ci-flash-out {from {opacity: 1; transform: translate(-50%, 0);}
+  to {opacity: 0; transform: translate(-50%, -16px); visibility: hidden;}}
+.ci-flash {transform: translate(-50%, 0);}
+/* the "?" hints next to some fields: a small dark card with the app's font */
+[data-testid="stTooltipContent"] {background: var(--ci-ink) !important; color: #FFFFFF !important;
+  font-family: "Inter", sans-serif !important; font-size: 0.8rem !important; line-height: 1.45;
+  border-radius: 10px !important; padding: 8px 12px !important; max-width: 260px !important;
+  white-space: normal !important; box-shadow: 0 10px 24px rgba(17, 17, 17, 0.2);}
+[data-testid="stTooltipContent"] * {color: #FFFFFF !important; font-size: 0.8rem !important;
+  margin: 0 !important;}
 /* How it works: pages turned by the arrows beside the dots at the bottom (never over the text) */
 .st-key-card_howto {position: relative; padding-bottom: 18px;}
 .st-key-howto_prev, .st-key-howto_next {position: absolute; bottom: 6px; width: 32px; height: 30px;
@@ -547,34 +574,34 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
   border-bottom-color: var(--ci-brand);}
 [class*="st-key-nav_"] [data-testid="stRadioOption"][data-selected="true"] p {
   color: var(--ci-brand); font-weight: 700;}
-.st-key-navgroup {background: var(--ci-brand-soft); border-radius: 14px; padding: 2px 6px 2px 4px;
-  flex-wrap: nowrap;}
-.st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 8px;}
-/* the group dropdown looks like a tab: no box, bold, orange, with its arrow */
-.st-key-groupsel {width: 180px !important; min-width: 180px; flex: 0 0 auto;}
-.st-key-navrow {flex-wrap: wrap; margin-top: 2px;}
-.st-key-navgroup, .st-key-navme {width: fit-content !important; flex: 0 0 auto;}
+/* one row: logo, group dropdown + group pages, divider, my pages, then coins, bell, New event */
+.st-key-toprow {flex-wrap: wrap; row-gap: 6px !important;}
+.st-key-toprow > div {width: auto !important; flex: 0 0 auto !important;}
+.st-key-toprow > div:has(.ci-topstats) {margin-left: auto;}
+.st-key-navgroup {flex-wrap: nowrap; margin-left: 12px;}
+.st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 6px;}
 .st-key-navgroup > div:first-child {flex: 0 0 auto !important; width: auto !important;}
-.st-key-groupsel [data-baseweb="select"] > div {background: transparent !important;
-  border: none !important; border-bottom: 2px solid var(--ci-brand) !important;
-  border-radius: 0 !important; min-height: 32px; box-shadow: none !important;}
-.st-key-groupsel [data-baseweb="select"] svg {color: var(--ci-brand); fill: var(--ci-brand);}
-/* first row of the top bar: logo on the left, the rest on the right, never stacked */
-.st-key-toprow {flex-wrap: nowrap;}
-.st-key-toprow > div:first-child {margin-right: auto;}
-.st-key-toprow > div {width: auto !important; flex: 0 0 auto;}
-.st-key-groupsel [data-baseweb="select"] div[value], .st-key-groupsel [data-baseweb="select"] span {
-  color: var(--ci-brand); font-weight: 700; font-size: 0.9rem;}
-@media (max-width: 760px) {
-  .st-key-toprow {flex-wrap: wrap;}
+[class*="st-key-nav_"] [data-testid="stRadioOption"] {padding: 6px 8px;}
+/* the group dropdown: a round white field like the bell and the buttons next to it */
+.st-key-groupsel {width: 150px !important; min-width: 150px; flex: 0 0 auto;}
+.st-key-groupsel [data-baseweb="select"] > div, .st-key-groupsel [data-testid="stSelectbox"] [role="group"] {
+  background: #FFFFFF !important; border: 1px solid var(--ci-line) !important;
+  border-radius: 999px !important; min-height: 36px; padding-left: 6px; box-shadow: none !important;}
+.st-key-groupsel [data-testid="stSelectbox"] [role="group"]:hover {border-color: #FDBA74 !important;}
+.st-key-groupsel [data-testid="stSelectbox"] input, .st-key-groupsel [data-baseweb="select"] span {
+  color: var(--ci-ink) !important; font-weight: 600; font-size: 0.9rem;}
+.st-key-groupsel [data-testid="stSelectbox"] svg {color: var(--ci-muted); fill: var(--ci-muted);}
+/* too narrow for one row: logo, coins, bell and New event first, the page tabs below */
+@media (max-width: 1180px) {
+  .st-key-toprow::after {content: ""; order: 5; flex-basis: 100%; height: 0;}
+  .st-key-toprow > div:has(.st-key-navgroup), .st-key-navgroup,
+  .st-key-toprow > div:has(.st-key-navme), .st-key-navme {order: 6;}
+  .st-key-navgroup {margin-left: 0;}
 }
-@media (max-width: 900px) {
-  .st-key-navrow {flex-direction: column; align-items: stretch; row-gap: 4px !important;}
-  .st-key-navrow > div, .st-key-navgroup, .st-key-navme {width: 100% !important;
-    flex: 0 0 auto !important; height: auto !important;}
-  .st-key-navgroup {flex-wrap: wrap;}
-  [class*="st-key-nav_"] [role="radiogroup"] {flex-direction: row !important; flex-wrap: wrap;}
+@media (max-width: 640px) {
+  .st-key-navgroup {flex-wrap: wrap; row-gap: 4px !important;}
   .st-key-navme {border-left: none; padding-left: 0;}
+  [class*="st-key-nav_"] [role="radiogroup"] {flex-wrap: wrap;}
 }
 /* choices drawn as equal round buttons (New event: Type, Who can win), like the member chips */
 [class*="st-key-choice_"] [role="radiogroup"] {display: grid !important; grid-auto-flow: column;

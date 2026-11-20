@@ -69,7 +69,7 @@ def _avatar_picker(page: PageData) -> None:
         for column, animal in zip(columns, AVATARS):
             chosen = page.user.avatar == animal
             column.button(
-                style.ANIMALS[animal], key=f"avatar_{animal}", help=animal.capitalize(),
+                style.ANIMALS[animal], key=f"avatar_{animal}",
                 type="primary" if chosen else "secondary", width="stretch",
                 on_click=_pick, args=(page.user.id, animal),
             )

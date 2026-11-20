@@ -473,7 +473,7 @@ def _actions_menu(user: User, summary: EventSummary, now: datetime) -> None:
     if not (show_flag or show_poll or show_delete):
         return
     with st.container(key=f"menu_{event.id}"):
-        st.button(":material/more_vert:", key=f"menubtn_{event.id}", help="More",
+        st.button(":material/more_vert:", key=f"menubtn_{event.id}",
                   on_click=_toggle_menu, args=(event.id,))
     if not st.session_state.get(_menu_key(event.id)):
         return
@@ -627,8 +627,7 @@ def _odds_buttons(user: User, summary: EventSummary) -> None:
                       horizontal_alignment="right"):
         for side, odds in ((SIDE_YES, summary.odds_yes), (SIDE_NO, summary.odds_no)):
             number = f"{odds:.2f}" if odds else "—"
-            if st.button(f"**{number}** {_short(event, side)}", key=f"odd{side}_{event.id}",
-                         help=f"Bet on {betting.side_label(event, side)}"):
+            if st.button(f"**{number}** {_short(event, side)}", key=f"odd{side}_{event.id}"):
                 _bet_dialog(user, summary, side)
 
 

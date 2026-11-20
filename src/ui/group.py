@@ -239,9 +239,9 @@ def _how_it_works() -> None:
     if time.monotonic() - turned >= HOWTO_SECONDS - 0.5:
         _turn_howto(1)
     with st.container(key="card_howto"):
-        st.button(":material/chevron_left:", key="howto_prev", help="Previous",
+        st.button(":material/chevron_left:", key="howto_prev",
                   on_click=_turn_howto, args=(-1,))
-        st.button(":material/chevron_right:", key="howto_next", help="Next",
+        st.button(":material/chevron_right:", key="howto_next",
                   on_click=_turn_howto, args=(1,))
         style.show(_howto_markup(st.session_state.get(HOWTO_PAGE_KEY, 0)))
 

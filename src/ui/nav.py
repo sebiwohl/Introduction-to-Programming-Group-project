@@ -1,9 +1,10 @@
 """The top bar: logo, page tabs, streak and balance, the notification bell and New event.
 
-The page tabs come in two parts. On the left, in one shaded block, the group
-dropdown with the pages that show only that group (Feed, Leaderboard, Group).
-On the right, apart, the pages about you across all your groups (My bets,
-Profile). The two radios act as one menu: NAV_KEY holds the open page.
+Everything sits in one row: the logo, the group dropdown with the pages that
+show only that group (Feed, Leaderboard, Group), a divider, the pages about you
+across all your groups (My bets, Profile), then the coins, the bell and New
+event. On narrow screens the page tabs move to a second row. The two radios
+act as one menu: NAV_KEY holds the open page.
 """
 
 from typing import Callable
@@ -51,8 +52,7 @@ def _top_stats(me: MemberStats, page: PageData) -> str:
 def _bell(page: PageData) -> None:
     """Draw the bell: the unread count, the newest notifications and "Mark all as read"."""
     unread = notifications.unread_count(page.notifications)
-    with st.popover(str(unread) if unread else " ", icon=":material/notifications:",
-                    help="Notifications"):
+    with st.popover(str(unread) if unread else " ", icon=":material/notifications:"):
         if not page.notifications:
             st.caption("No notifications yet.")
             return
@@ -86,14 +86,12 @@ def _tabs(key: str, pages: tuple, current: str) -> None:
 
 
 def _group_dropdown(page: PageData) -> None:
-    """Draw the group dropdown, styled like the tabs; the pages next to it follow it."""
+    """Draw the group dropdown (a round field); the pages next to it follow it."""
     names = {group.id: group.name for group in page.groups}
     st.session_state[GROUP_KEY] = page.group.id  # the group actually shown (it may have changed)
     with st.container(key="groupsel"):
         st.selectbox("Group", list(names), key=GROUP_KEY, format_func=names.get,
-                     label_visibility="collapsed",
-                     help="Feed, Leaderboard and Group show this group. "
-                          "My bets and Profile cover all your groups.")
+                     label_visibility="collapsed")
 
 
 def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -> str:
@@ -108,16 +106,14 @@ def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -
         with st.container(key="toprow", horizontal=True, vertical_alignment="center",
                           gap="small"):
             style.show(style.logo())
-            style.show(_top_stats(me, page))
-            _bell(page)
-            if st.button("New event", key="new_event", type="primary", icon=":material/add:"):
-                on_new_event()
-        with st.container(key="navrow", horizontal=True, vertical_alignment="center",
-                          gap="medium"):
             with st.container(key="navgroup", horizontal=True, vertical_alignment="center",
                               gap="small"):
                 _group_dropdown(page)
                 _tabs(GROUP_TABS_KEY, GROUP_PAGES, choice)
             with st.container(key="navme"):
                 _tabs(MY_TABS_KEY, MY_PAGES, choice)
+            style.show(_top_stats(me, page))
+            _bell(page)
+            if st.button("New event", key="new_event", type="primary", icon=":material/add:"):
+                on_new_event()
     return choice
