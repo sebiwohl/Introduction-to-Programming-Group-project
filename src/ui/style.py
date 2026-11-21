@@ -266,10 +266,31 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-podium .ci-avatar {width: 36px; height: 36px; font-size: 0.95rem;}
 .ci-podium-rank {font-size: 3rem; font-weight: 900; line-height: 1;}
 .ci-podium-name {font-size: 1.1rem; font-weight: 800; margin-top: 18px;}
+/* podium trophies: gold, silver and bronze cups that pop in */
+.ci-trophy {width: 58px; height: 58px; flex: none; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .15));
+  animation: ci-trophy-pop .7s cubic-bezier(.34, 1.56, .64, 1) both;
+  animation-delay: calc(var(--t, 0) * 120ms + 200ms);}
+@keyframes ci-trophy-pop {from {transform: scale(.3) rotate(-12deg); opacity: 0;}
+  to {transform: none; opacity: 1;}}
+@media (prefers-reduced-motion: reduce) {.ci-trophy {animation: none;}}
+@media (max-width: 520px) {.ci-trophy {width: 44px; height: 44px;}}
 .ci-h2h {display: grid; grid-template-columns: 1fr auto 1fr; row-gap: 10px; align-items: center;
   font-size: 0.95rem;}
 .ci-h2h .ci-kicker {text-align: center;}
 .ci-h2h .ci-right {text-align: right;}
+/* head to head: "vs" stays in the middle whatever the names' lengths (same columns as the rows) */
+.ci-h2h-head {display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+  margin: 12px 0 14px;}
+.ci-h2h-head .ci-right {justify-self: end; min-width: 0;}
+/* head to head: an orange title band at the top (title, "Compare with" and a white picker) */
+.st-key-h2h_band {background: var(--ci-grad); margin: -16px -18px 4px; padding: 16px 18px 18px;
+  width: calc(100% + 36px) !important; max-width: none !important; border-radius: 15px 15px 0 0;}
+.st-key-h2h_band .ci-label, .st-key-h2h_band [data-testid="stWidgetLabel"] p {color: #FFFFFF !important;}
+.st-key-h2h_band [data-testid="stWidgetLabel"] p {font-weight: 600;}
+.st-key-h2h_band .react-aria-ComboBox [role="group"] {background: #FFFFFF !important;
+  border: 1.5px solid #FFFFFF !important;}
+.st-key-h2h_band .react-aria-ComboBox input {color: #C2410C !important; font-weight: 700;}
+.st-key-h2h_band .react-aria-ComboBox button svg {fill: #C2410C; color: #C2410C;}
 .ci-better {font-weight: 800; color: var(--ci-yes);}
 .ci-note {background: var(--ci-soft); border-radius: 10px; padding: 10px 12px; font-weight: 700;
   font-size: 0.88rem; margin-top: 14px;}
@@ -975,6 +996,35 @@ def rank_badge(rank: int) -> str:
     """Return the rank as a round badge: gold, silver or bronze for the top 3."""
     medal = MEDALS.get(rank, "plain")
     return f'<span class="ci-medal ci-medal-{medal}">{rank}</span>'
+
+
+# Trophy colours for the podium: (light, dark, number colour), like the round medals.
+TROPHY_COLOURS = {"gold": ("#FDE68A", "#F59E0B", "#5B3A00"),
+                  "silver": ("#F1F5F9", "#94A3B8", "#1E293B"),
+                  "bronze": ("#FED7AA", "#C2722E", "#4A2306")}
+
+
+def trophy(rank: int) -> str:
+    """Return a gold, silver or bronze trophy (inline SVG) with the rank on the cup.
+
+    Ranks after 3 (not on the podium) get a plain grey cup.
+    """
+    medal = MEDALS.get(rank, "")
+    light, dark, ink = TROPHY_COLOURS.get(medal, ("#F4F4F5", "#A1A1AA", "#27272A"))
+    grad = f"ci-trophy-{medal or 'plain'}"
+    fill = f"url(#{grad})"
+    return (
+        f'<svg class="ci-trophy" viewBox="0 0 64 64" role="img" aria-label="Rank {rank}">'
+        f'<defs><linearGradient id="{grad}" x1="0" y1="0" x2="1" y2="1">'
+        f'<stop offset="0" stop-color="{light}"/><stop offset="1" stop-color="{dark}"/></linearGradient></defs>'
+        f'<path d="M17 14H9c0 9 4 14 10 15M47 14h8c0 9-4 14-10 15" fill="none" stroke="{dark}" '
+        f'stroke-width="4" stroke-linecap="round"/>'
+        f'<path d="M16 8h32v14c0 10-7 18-16 18S16 32 16 22z" fill="{fill}"/>'
+        f'<rect x="28" y="39" width="8" height="9" fill="{dark}"/>'
+        f'<rect x="19" y="48" width="26" height="8" rx="2.5" fill="{fill}"/>'
+        f'<text x="32" y="29" text-anchor="middle" font-size="17" font-weight="900" '
+        f'font-family="inherit" fill="{ink}">{rank}</text></svg>'
+    )
 
 
 SHUFFLE_VARIANTS = 4

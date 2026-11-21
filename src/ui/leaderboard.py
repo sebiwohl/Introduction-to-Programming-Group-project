@@ -53,11 +53,16 @@ def _kicker(page: PageData) -> str:
 
 
 def _podium(page: PageData, member: Dict[str, MemberStats]) -> str:
-    """Return the three cards for the top of the ranking by coins."""
+    """Return three cards for the top of the ranking by coins, each with its trophy.
+
+    Members tied for a place look the same: every first place is orange with a gold
+    trophy, and so on. With more ties than cards, the board order (name) decides.
+    """
     cards = []
-    for index, row in enumerate(page.leaderboard[:3]):
+    top = page.leaderboard[:3]
+    for index, row in enumerate(top):
         is_me = row.username == page.user.username
-        kind = " ci-podium-first" if index == 0 else (" ci-podium-me" if is_me else "")
+        kind = " ci-podium-first" if row.rank == 1 else (" ci-podium-me" if is_me else "")
         name = "You" if is_me else style.esc(row.username)
         rate = member.get(row.username, MemberStats()).hit_rate
         detail = f"{style.money(row.balance)} coins"
@@ -65,7 +70,7 @@ def _podium(page: PageData, member: Dict[str, MemberStats]) -> str:
             detail += f" · {round(rate * 100)}% hit rate"
         cards.append(
             f'<div class="ci-podium-card{kind}" style="--t:{index}"><div class="ci-row">'
-            f'<span class="ci-podium-rank">{style.rolling(str(row.rank))}</span>'
+            f'{style.trophy(row.rank)}'
             f'{style.avatar(row.username, is_me)}</div>'
             f'<div class="ci-podium-name">{name}</div><div class="ci-muted">{detail}</div></div>'
         )
@@ -109,10 +114,10 @@ def _compare(mine, theirs) -> tuple:
     return ("ci-better", "") if mine > theirs else ("", "ci-better")
 
 
-def _head_to_head(page: PageData, member: Dict[str, MemberStats]) -> str:
-    """Return the card comparing the user with the closest rival on the board."""
+def _head_to_head(page: PageData, member: Dict[str, MemberStats], rival_name: str) -> str:
+    """Return the comparison of the user with one other member (rows, then a note)."""
     rows = page.leaderboard
-    rival = stats.closest_rival(rows, page.user.username)
+    rival = next((r for r in rows if r.username == rival_name), None)
     mine = next((r for r in rows if r.username == page.user.username), None)
     if rival is None or mine is None:
         return ""
@@ -140,15 +145,27 @@ def _head_to_head(page: PageData, member: Dict[str, MemberStats]) -> str:
     else:
         note = f"You and {style.esc(rival.username)} are level."
     header = (
-        f'<div class="ci-row" style="margin:12px 0 14px">{style.who(mine.username, True)}'
-        f'<span class="ci-kicker">vs</span><span class="ci-who"><b>{style.esc(rival.username)}</b>'
+        f'<div class="ci-h2h-head">{style.who(mine.username, True)}'
+        f'<span class="ci-kicker">vs</span><span class="ci-who ci-right"><b>{style.esc(rival.username)}</b>'
         f"{style.avatar(rival.username)}</span></div>"
     )
-    return (
-        f'<div class="ci-card"><div class="ci-row"><span class="ci-label">Head to head</span>'
-        f'<span class="ci-muted">Your closest rival</span></div>{header}'
-        f'<div class="ci-h2h">{"".join(cells)}</div><div class="ci-note">{note}</div></div>'
-    )
+    return f'{header}<div class="ci-h2h">{"".join(cells)}</div><div class="ci-note">{note}</div>'
+
+
+def _head_to_head_card(where, page: PageData, member: Dict[str, MemberStats]) -> None:
+    """Draw the head to head card with a picker; the closest rival is chosen at first."""
+    names, closest = stats.rival_choices(page.leaderboard, page.user.username)
+    if not names:
+        return
+    with where.container(key="card_h2h"):
+        with st.container(key="h2h_band"):  # the orange title band
+            style.show('<div class="ci-label">Head to head</div>')
+            # one key per group, so switching groups starts again at the closest rival
+            rival_name = st.selectbox(
+                "Compare with", names, index=closest, key=f"h2h_rival_{page.group.id}",
+                format_func=lambda name: f"{name} (closest rival)" if name == names[closest] else name,
+            )
+        style.show(_head_to_head(page, member, rival_name))
 
 
 def _record_line(label: str, holder: Optional[str], value: str, user: str) -> str:
@@ -200,7 +217,7 @@ def leaderboard_page(page: PageData, member: Dict[str, MemberStats]) -> None:
     style.show(_table(page, ordered, member, ranking))
     st.write("")
     left, right = st.columns(2, gap="medium")
-    style.show(where=left, markup=_head_to_head(page, member))
+    _head_to_head_card(left, page, member)
     style.show(where=right, markup=_records(page, member))
     st.write("")
     _repayment_window(page)

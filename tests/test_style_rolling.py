@@ -38,3 +38,11 @@ def test_each_ranking_gets_its_own_animation_so_switching_replays_it():
     names = {re.search(r"animation-name:(\S+)", style.shuffle_style(0, 3, v)).group(1)
              for v in range(4)}
     assert names == {"ci-shuffle-0", "ci-shuffle-1", "ci-shuffle-2", "ci-shuffle-3"}
+
+
+def test_trophy_has_the_medal_colour_and_the_rank():
+    """The podium trophy is gold, silver or bronze and shows the rank on the cup."""
+    assert "#F59E0B" in style.trophy(1) and ">1</text>" in style.trophy(1)
+    assert "#94A3B8" in style.trophy(2) and ">2</text>" in style.trophy(2)
+    assert "#C2722E" in style.trophy(3) and ">3</text>" in style.trophy(3)
+    assert "ci-trophy-plain" in style.trophy(4)  # below the podium: a plain grey cup

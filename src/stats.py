@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import ROUND_DOWN, Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src import betting
 from src.models import (
@@ -248,6 +248,18 @@ def closest_rival(rows: List[LeaderboardRow], username: str) -> Optional[Leaderb
     if mine is None or not others:
         return None
     return max(others, key=lambda r: r.balance)
+
+
+def rival_choices(rows: List[LeaderboardRow], username: str) -> Tuple[List[str], int]:
+    """Return the other members' names in board order and the index of the closest rival.
+
+    The head to head card lets the user pick anyone; the closest rival is chosen first.
+    With nobody else in the group the list is empty and the index is 0.
+    """
+    names = [r.username for r in rows if r.username != username]
+    rival = closest_rival(rows, username)
+    index = names.index(rival.username) if rival is not None and rival.username in names else 0
+    return names, index
 
 
 def bettor_count(summary: EventSummary) -> int:

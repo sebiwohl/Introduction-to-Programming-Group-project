@@ -152,6 +152,21 @@ def test_closest_rival_is_below_when_leading():
     assert stats.closest_rival(rows(("Ann", 10)), "Ann") is None
 
 
+def test_rival_choices_list_everyone_else_with_the_closest_rival_first_chosen():
+    """The head to head picker offers every other member; the closest rival is preselected."""
+    board = rows(("Ann", 1060), ("Ben", 980), ("You", 940), ("Cleo", 900))
+    names, index = stats.rival_choices(board, "You")
+    assert names == ["Ann", "Ben", "Cleo"]
+    assert names[index] == "Ben"
+    names, index = stats.rival_choices(board, "Ann")  # leading: the one just below
+    assert names[index] == "Ben"
+
+
+def test_rival_choices_empty_when_alone():
+    """With nobody else in the group there is nobody to compare with."""
+    assert stats.rival_choices(rows(("Ann", 10)), "Ann") == ([], 0)
+
+
 def test_rank_members_by_each_ranking():
     board = rows(("Ann", 1000), ("Ben", 900), ("Cleo", 800))
     member = {
