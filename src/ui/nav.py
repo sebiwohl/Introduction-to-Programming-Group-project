@@ -112,8 +112,11 @@ def top_bar(page: PageData, me: MemberStats, on_new_event: Callable[[], None]) -
                 _tabs(GROUP_TABS_KEY, GROUP_PAGES, choice)
             with st.container(key="navme"):
                 _tabs(MY_TABS_KEY, MY_PAGES, choice)
-            style.show(_top_stats(me, page))
-            _bell(page)
-            if st.button("New event", key="new_event", type="primary", icon=":material/add:"):
-                on_new_event()
+            # coins, bell and New event stay together, so New event never wraps on its own
+            with st.container(key="topright", horizontal=True, vertical_alignment="center",
+                              gap="small"):
+                style.show(_top_stats(me, page))
+                _bell(page)
+                if st.button("New event", key="new_event", type="primary", icon=":material/add:"):
+                    on_new_event()
     return choice

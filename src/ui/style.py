@@ -603,7 +603,16 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 /* one row: logo, group dropdown + group pages, divider, my pages, then coins, bell, New event */
 .st-key-toprow {flex-wrap: wrap; row-gap: 6px !important;}
 .st-key-toprow > div {width: auto !important; flex: 0 0 auto !important;}
-.st-key-toprow > div:has(.ci-topstats) {margin-left: auto;}
+.st-key-toprow > div:has(.st-key-topright) {margin-left: auto;}
+.st-key-topright {flex-wrap: nowrap;}
+.st-key-topright > div {width: auto !important; flex: 0 0 auto !important;}
+/* a tight single row: New event becomes a round "+" so it stays next to the bell */
+@media (min-width: 1181px) and (max-width: 1440px) {
+  .st-key-new_event button {width: 40px; min-width: 40px; height: 40px; padding: 0 !important;
+    justify-content: center;}
+  .st-key-new_event button [data-testid="stMarkdownContainer"] {display: none;}
+  .st-key-new_event button span {margin: 0 !important;}
+}
 .st-key-navgroup {flex-wrap: nowrap; margin-left: 12px;}
 .st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 6px;}
 .st-key-navgroup > div:first-child {flex: 0 0 auto !important; width: auto !important;}
