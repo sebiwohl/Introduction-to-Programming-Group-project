@@ -124,6 +124,7 @@ Methods considered and not chosen:
 
 ### 3.4 Moderation by poll
 - Any member can flag an event they think is fishy. One flag per member per event.
+- When flagging, the member can leave an optional note (at most 140 characters) saying why. The whole group sees it on the event card, in the poll and in the activity log. The notes are cleared together with the flags when a poll keeps the event.
 - When 25% of the group's members (at least 2) have flagged it, a poll opens automatically and betting on that event is paused.
 - If the flags alone are already more than 50% of the members (for example 2 flags in a group of 3), the event is deleted straight away without a poll, and all stakes are refunded.
 - The admin can also open a poll directly at any time, without the flag threshold.
@@ -209,6 +210,7 @@ There is no starting balance: members join with 0 and get coins from top-ups (2.
 | status             | open, paused, closed, resolved, deleted             |
 | outcome            | yes, no, or empty until resolved (over/under: yes = over, no = under; always empty for names events) |
 | flags              | List of user ids who flagged it                     |
+| flag_notes         | Optional: the note each flagger left, by user id (only flaggers, 1 to 140 characters; left out when there are none) |
 | type               | yes_no, over_under or names                         |
 | line               | Over/under line as decimal text ("2.5"), empty for yes/no and names |
 | event_time         | When the event happens; betting closes no later     |

@@ -14,7 +14,8 @@ import streamlit as st
 
 from src import auth, betting, moderation, service, stats
 from src.betting import BettingError
-from src.models import SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN, STATUS_PAUSED, STATUS_RESOLVED, User
+from src.models import (MAX_FLAG_NOTE_LENGTH, SIDE_NO, SIDE_YES, STATUS_CLOSED, STATUS_OPEN,
+                        STATUS_PAUSED, STATUS_RESOLVED, User)
 from src.service import BetRecord, EventSummary, PageData
 from src.stats import MemberStats
 from src.ui import confetti, nav, style
@@ -430,12 +431,30 @@ def _confirm_delete(user: User, event_id: str, title: str) -> None:
         st.rerun()
 
 
-def _flag(user: User, event_id: str) -> None:
-    """Flag the event and say what happened (flagged, poll opened or deleted)."""
+@st.dialog("Flag this event?")
+def _flag_dialog(user: User, event_id: str, title: str) -> None:
+    """Ask why the member flags the event (optional), then flag it; the group sees the note."""
+    style.show(f'<div style="font-weight:800;font-size:1.05rem">{style.esc(title)}</div>'
+               '<p class="ci-muted" style="margin-top:8px">Enough flags pause betting for a vote, '
+               "and your flag counts as a delete vote.</p>")
+    note = st.text_area("Why are you flagging it? (optional)", key=f"flag_note_{event_id}",
+                        max_chars=MAX_FLAG_NOTE_LENGTH, height=90,
+                        placeholder="e.g. The creator already knows the answer.")
+    st.caption("Everyone in the group sees this note.")
+    cancel_col, confirm_col = st.columns(2)
+    if cancel_col.button("Cancel", key="flag_cancel", width="stretch"):
+        st.rerun()
+    if confirm_col.button("Flag it", key="flag_confirm", type="primary", icon=":material/flag:",
+                          width="stretch"):
+        _flag(user, event_id, note)
+
+
+def _flag(user: User, event_id: str, note: str = "") -> None:
+    """Flag the event with the note and say what happened (flagged, poll opened or deleted)."""
     outcome = {}
 
     def run() -> None:
-        outcome["result"] = moderation.flag_event(user.id, event_id, _now())
+        outcome["result"] = moderation.flag_event(user.id, event_id, _now(), note=note)
 
     if attempt(run):
         st.session_state[FLASH_KEY] = ("success", FLAG_MESSAGES[outcome["result"]])
@@ -483,7 +502,7 @@ def _actions_menu(user: User, summary: EventSummary, now: datetime) -> None:
         if show_flag and st.button("Flag", key=f"flag_{event.id}", icon=":material/flag:",
                                    width="stretch"):
             _close_menu(event.id)
-            _flag(user, event.id)
+            _flag_dialog(user, event.id, event.title)
         if show_poll and st.button("Open poll", key=f"poll_{event.id}",
                                    icon=":material/how_to_vote:", width="stretch"):
             _close_menu(event.id)
@@ -494,6 +513,15 @@ def _actions_menu(user: User, summary: EventSummary, now: datetime) -> None:
                                      width="stretch"):
             _close_menu(event.id)
             _confirm_delete(user, event.id, event.title)
+
+
+def _flag_notes(summary: EventSummary) -> str:
+    """Return the notes members left when flagging, like '⚑ anna: The result is already known'."""
+    if not summary.flag_notes:
+        return ""
+    lines = "".join(f'<div class="ci-flagreason"><b>{style.esc(name)}:</b> {style.esc(note)}</div>'
+                    for name, note in summary.flag_notes)
+    return f'<div class="ci-flagreasons">{lines}</div>'
 
 
 def _flag_line(user: User, summary: EventSummary) -> None:
@@ -511,7 +539,8 @@ def _flag_line(user: User, summary: EventSummary) -> None:
             style.show('<div class="ci-muted" style="font-size:.78rem">You flagged it</div>')
         elif _may(user, auth.FLAG_EVENT, summary):
             if st.button("Flag", key=f"flagtoo_{event.id}", icon=":material/flag:"):
-                _flag(user, event.id)
+                _flag_dialog(user, event.id, event.title)
+    style.show(_flag_notes(summary))
 
 
 def _vote_bar(poll) -> str:
@@ -544,6 +573,7 @@ def _poll_panel(user: User, summary: EventSummary) -> None:
         f'<div class="ci-muted" style="margin:4px 0 6px">Voting ends {style.when(poll.closes_at)}. '
         "More than half of the votes for Delete removes it and refunds every stake; "
         "a tie or no votes keeps it.</div>"
+        + _flag_notes(summary)
         + _vote_bar(poll)
     )
     mine = poll.votes.get(user.id)

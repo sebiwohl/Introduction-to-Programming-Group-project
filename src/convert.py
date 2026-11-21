@@ -195,6 +195,8 @@ def event_to_dict(event: Event) -> dict:
         "event_time": time_to_text(event.event_time),
         "result_value": _optional_text(event.result_value),
     }
+    if event.flag_notes:  # only written when someone left a note, so older data is unchanged
+        data["flag_notes"] = dict(event.flag_notes)
     if event.event_type == TYPE_NAMES:
         data.update({
             "options": [{"id": option.id, "name": option.name} for option in event.options],
@@ -211,7 +213,8 @@ def event_from_dict(data: dict) -> Event:
         description=data["description"],
         close_time=text_to_time(data["close_time"]),
         status=data["status"], outcome=data["outcome"],
-        flags=list(data["flags"]), event_type=data["type"],
+        flags=list(data["flags"]), flag_notes=dict(data.get("flag_notes", {})),
+        event_type=data["type"],
         line=_optional_number(data["line"]),
         event_time=text_to_time(data["event_time"]),
         result_value=_optional_number(data["result_value"]),

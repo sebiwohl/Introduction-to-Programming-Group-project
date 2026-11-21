@@ -39,6 +39,7 @@ EVENT_TYPES = (TYPE_YES_NO, TYPE_OVER_UNDER, TYPE_NAMES)
 MIN_OPTIONS = 2
 MAX_OPTIONS = 10
 MAX_OPTION_LENGTH = 40
+MAX_FLAG_NOTE_LENGTH = 140  # the optional note a member leaves when flagging
 
 
 @dataclass
@@ -120,6 +121,7 @@ class Event:
     status: str = STATUS_OPEN
     outcome: Optional[str] = None
     flags: list = field(default_factory=list)
+    flag_notes: dict = field(default_factory=dict)  # flagger's id -> why they flagged
     event_type: str = TYPE_YES_NO
     line: Optional[Decimal] = None
     event_time: Optional[datetime] = None

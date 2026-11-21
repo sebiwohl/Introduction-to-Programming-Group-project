@@ -15,7 +15,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src import auth, balances, betting, moderation, notifications, storage
 from src.betting import BettingError
@@ -96,7 +96,8 @@ class EventSummary:
     one OptionRow per option instead of the yes/no numbers (those stay 0 and
     None), and once resolved, paid_odds is what each coin on a winning option
     paid (None if every stake was refunded). poll is the event's running poll
-    (only while the event is paused), else None.
+    (only while the event is paused), else None. flag_notes are the notes left
+    when flagging, as (username, note) in the order the flags came.
     """
 
     event: Event
@@ -111,6 +112,7 @@ class EventSummary:
     options: List[OptionRow] = field(default_factory=list)
     paid_odds: Optional[float] = None
     poll: Optional[Poll] = None
+    flag_notes: List[Tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -332,8 +334,14 @@ def _summarize_names(state: _State, event: Event, user: User, bets: List[Bet]) -
         event=event, pool=total, stake_yes=Decimal("0"), stake_no=Decimal("0"),
         odds_yes=None, odds_no=None, my_stake=sum((row.my_stake for row in rows), Decimal("0")),
         creator_name=_username(state, event.creator_id), bettors=_bettors(state, bets),
-        options=rows, paid_odds=paid,
+        options=rows, paid_odds=paid, flag_notes=_flag_notes(state, event),
     )
+
+
+def _flag_notes(state: _State, event: Event) -> List[Tuple[str, str]]:
+    """Return the notes left when flagging the event, as (username, note), in flag order."""
+    return [(_username(state, user_id), event.flag_notes[user_id])
+            for user_id in event.flags if event.flag_notes.get(user_id)]
 
 
 def _summarize(state: _State, event: Event, user: User) -> EventSummary:
@@ -353,6 +361,7 @@ def _summarize(state: _State, event: Event, user: User) -> EventSummary:
         my_stake=my_stake,
         creator_name=_username(state, event.creator_id),
         bettors=_bettors(state, bets),
+        flag_notes=_flag_notes(state, event),
     )
 
 
