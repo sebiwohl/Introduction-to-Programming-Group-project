@@ -6,6 +6,13 @@ Nova SBE, Fall 2026, Introduction to Programming, group project.
 
 **Live app:** TODO: add the Streamlit Community Cloud URL (`https://<app-name>.streamlit.app`)
 
+## Objectives
+
+- Let a group of friends bet on everyday events with virtual coins, with odds set by the group itself instead of a bookmaker.
+- Keep the betting fair and exact: payouts always add up to the pool, balances never go below zero, and every rule is checked in one place.
+- Let the group run itself: the admin tops up coins and confirms repayments, and members can flag fishy events and vote to delete them.
+- Build it as a deployed, multi-user web app that keeps its data across restarts, with tests for both the accepted and the rejected actions.
+
 ## Team
 
 | Name | Student number | GitHub |
@@ -31,6 +38,20 @@ The full rules are in [docs/product-requirements.md](docs/product-requirements.m
 
 Pool = all stakes on all sides. Odds for a side = pool / stake on that side. Example: 40 coins on YES and 10 on NO make a pool of 50. The YES odds are 50 / 40 = 1.25 and the NO odds are 50 / 10 = 5.00. If NO wins, a 10-coin NO bet gets 50 back. Money is stored in whole cents, each share is rounded down to the cent, and the leftover cents go to the winner with the biggest stake, so the payouts always add up to the pool.
 
+## Installation and running
+
+You need Python 3.12 and Git.
+
+1. Get the code:
+
+   ```bash
+   git clone https://github.com/sebiwohl/Introduction-to-Programming-Group-project.git
+   cd Introduction-to-Programming-Group-project
+   ```
+
+2. Optional: create a virtual environment (`python -m venv .venv`, then `source .venv/bin/activate`, or `.venv\Scripts\activate` on Windows).
+3. Install, run and test with the commands below. The app opens at http://localhost:8501 and stores its data in `data/data.json`; no account or secret is needed to run it locally.
+
 ## Commands
 
 ```bash
@@ -39,7 +60,7 @@ streamlit run app.py
 pytest
 ```
 
-Needs Python 3.12. Database tests are skipped unless `TEST_DATABASE_URL` points to an empty test database (never the real one).
+Database tests are skipped unless `TEST_DATABASE_URL` points to an empty test database (never the real one).
 
 Demo data (one group, four demo accounts, events in every state) goes into the local file. The demo password is read from `SEED_PASSWORD`, so it is never committed:
 
