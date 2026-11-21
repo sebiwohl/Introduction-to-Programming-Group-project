@@ -703,8 +703,8 @@ def _biggest_pool_id(summaries: List[EventSummary]) -> Optional[str]:
 
 
 def _win_banner(page: PageData, me: MemberStats) -> str:
-    """Return the black 'You called it' banner if the user's latest settled bet won."""
-    record = stats.latest_win(page.my_bets)
+    """Return the 'You called it' banner if the user's latest settled bet in this group won."""
+    record = stats.latest_win(page.my_bets, page.group.id)
     if record is None:
         return ""
     summary = next((s for s in page.events if s.event.id == record.bet.event_id), None)
@@ -802,7 +802,7 @@ def _side_column(page: PageData, me: MemberStats) -> None:
 
 def _amount_won(page: PageData) -> str:
     """Return what the user's latest win made on top of the stake, like '+15' ('' if none)."""
-    record = stats.latest_win(page.my_bets)
+    record = stats.latest_win(page.my_bets, page.group.id)
     return style.signed(record.bet.payout - record.bet.stake) if record else ""
 
 

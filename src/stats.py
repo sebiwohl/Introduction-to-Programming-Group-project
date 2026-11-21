@@ -213,12 +213,16 @@ def in_play(records: List[BetRecord]) -> Decimal:
     )
 
 
-def latest_win(records: List[BetRecord]) -> Optional[BetRecord]:
+def latest_win(records: List[BetRecord], group_id: Optional[str] = None) -> Optional[BetRecord]:
     """Return the user's newest settled bet if it was a win, else None.
 
     Records come newest event first (service._bet_history); refunds are skipped.
+    With group_id, only bets in that group count, so a win in one group is not
+    announced in another.
     """
     for record in records:
+        if group_id is not None and record.group_id != group_id:
+            continue
         result = bet_result(record)
         if result in (WON, LOST):
             return record if result == WON else None

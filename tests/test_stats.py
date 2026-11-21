@@ -126,6 +126,16 @@ def test_latest_win_only_if_newest_settled_bet_won():
     assert stats.latest_win([]) is None
 
 
+def test_latest_win_counts_only_the_chosen_group():
+    """A win in one group is not announced in another group's feed."""
+    won, lost = record("resolved", 10, "20"), record("resolved", 10, "0")
+    won.group_id, lost.group_id = "g1", "g2"
+    assert stats.latest_win([won, lost], "g1") is won
+    assert stats.latest_win([won, lost], "g2") is None
+    assert stats.latest_win([won], "g3") is None
+    assert stats.latest_win([won, lost]) is won  # without a group, all bets count
+
+
 # --- leaderboard helpers ------------------------------------------------------
 
 def test_next_above_is_the_closest_richer_member():
