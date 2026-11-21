@@ -606,12 +606,15 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .st-key-toprow > div:has(.st-key-topright) {margin-left: auto;}
 .st-key-topright {flex-wrap: nowrap;}
 .st-key-topright > div {width: auto !important; flex: 0 0 auto !important;}
-/* a tight single row: New event becomes a round "+" so it stays next to the bell */
-@media (min-width: 1181px) and (max-width: 1440px) {
-  .st-key-new_event button {width: 40px; min-width: 40px; height: 40px; padding: 0 !important;
-    justify-content: center;}
-  .st-key-new_event button [data-testid="stMarkdownContainer"] {display: none;}
-  .st-key-new_event button span {margin: 0 !important;}
+/* the page is at most 1120px wide, so the one-row bar is always about 1040px. To fit every
+   item with the full "+ New event" button on one line, the gaps, the tabs' padding and the
+   group dropdown are a little tighter while the page tabs share the row. */
+@media (min-width: 1181px) {
+  .st-key-toprow, .st-key-navgroup, .st-key-topright {column-gap: 8px !important;}
+  .st-key-toprow [class*="st-key-nav_"] [data-testid="stRadioOption"] {padding: 6px 6px !important;}
+  .st-key-groupsel {width: 136px !important; min-width: 136px !important;}
+  .st-key-navgroup {margin-left: 4px !important;}
+  .st-key-new_event button {padding: 0 14px !important;}
 }
 .st-key-navgroup {flex-wrap: nowrap; margin-left: 12px;}
 .st-key-navme {border-left: 2px solid var(--ci-line); padding-left: 6px;}
