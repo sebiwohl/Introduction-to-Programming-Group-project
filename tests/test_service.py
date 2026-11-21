@@ -360,6 +360,13 @@ def test_set_avatar_rejects_unknown_picture(path):
     assert service.get_user("u2", path).avatar == ""
 
 
+def test_set_avatar_can_remove_the_animal(path):
+    """Choosing "No animal" clears the picture, so the initial shows again."""
+    service.set_avatar("u2", "panda", path)
+    service.set_avatar("u2", "", path)
+    assert service.get_user("u2", path).avatar == ""
+
+
 def test_set_avatar_rejects_unknown_user(path):
     with pytest.raises(BettingError):
         service.set_avatar("nobody", "fox", path)

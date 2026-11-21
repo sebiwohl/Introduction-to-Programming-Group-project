@@ -34,6 +34,7 @@ def _tile(order: int, label: str, value: str, note: str, extra: str = "") -> str
 
 
 EDITING_KEY = "editing_profile"
+NO_ANIMAL = "🚫"  # the picker's "No animal" button
 
 
 def _identity(page: PageData, row: Optional[LeaderboardRow]) -> str:
@@ -55,21 +56,23 @@ def _toggle_editing() -> None:
 
 
 def _pick(user_id: str, animal: str) -> None:
-    """Save the chosen animal as the profile picture and close the editor if it worked."""
-    if attempt(lambda: service.set_avatar(user_id, animal), "Profile picture updated."):
+    """Save the chosen animal ("" for none) as the profile picture and close the editor if it worked."""
+    message = "Profile picture updated." if animal else "Profile picture removed."
+    if attempt(lambda: service.set_avatar(user_id, animal), message):
         st.session_state[EDITING_KEY] = False
 
 
 def _avatar_picker(page: PageData) -> None:
-    """Draw the seven animal pictures; clicking one saves it as the profile picture."""
+    """Draw "No animal" and the seven animal pictures; clicking one saves it as the profile picture."""
     st.markdown('<div class="ci-label" style="margin:14px 0 6px">Choose your profile picture</div>',
                 unsafe_allow_html=True)
+    choices = ("",) + AVATARS  # "" = no animal: the round initial is shown instead
     with st.container(key="avatars"):
-        columns = st.columns(len(AVATARS))
-        for column, animal in zip(columns, AVATARS):
+        columns = st.columns(len(choices))
+        for column, animal in zip(columns, choices):
             chosen = page.user.avatar == animal
             column.button(
-                style.ANIMALS[animal], key=f"avatar_{animal}",
+                style.ANIMALS.get(animal, NO_ANIMAL), key=f"avatar_{animal or 'none'}",
                 type="primary" if chosen else "secondary", width="stretch",
                 on_click=_pick, args=(page.user.id, animal),
             )
