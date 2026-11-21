@@ -215,7 +215,12 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 .ci-big {font-size: 2.6rem; font-weight: 900; letter-spacing: -0.04em; line-height: 1;}
 .ci-board-row {display: flex; align-items: center; gap: 10px; padding: 6px 8px;
   border-radius: 10px; font-size: 0.9rem;}
-.ci-board-row b {margin-left: auto;}
+.ci-board-row b {margin-left: auto; flex: none; padding-left: 8px;}
+/* long names get "…" so the ADMIN badge and the coins always fit */
+.ci-who-text {display: inline-flex; align-items: center; min-width: 0;}
+.ci-name {overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;}
+.ci-who-text .ci-admin {flex: none;}
+.ci-board-row .ci-who {flex: 1 1 auto; overflow: hidden;}
 .ci-board-me {background: var(--ci-soft);}
 .ci-rank {width: 16px; font-weight: 700;}
 .ci-progress {height: 4px; border-radius: 999px; background: var(--ci-line); margin-top: 8px;}
@@ -859,10 +864,14 @@ def avatar(name: str, is_me: bool = False) -> str:
 
 
 def who(name: str, is_me: bool, is_admin: bool = False) -> str:
-    """Return avatar plus name ('You' for the viewer), with the admin badge if needed."""
+    """Return avatar plus name ('You' for the viewer), with the admin badge if needed.
+
+    A long name is cut with '…' where space is short (full name on hover); the badge stays.
+    """
     label = "You" if is_me else esc(name)
     badge = admin_badge() if is_admin else ""
-    return f'<span class="ci-who">{avatar(name, is_me)}<span>{label}{badge}</span></span>'
+    return (f'<span class="ci-who">{avatar(name, is_me)}<span class="ci-who-text">'
+            f'<span class="ci-name" title="{esc(name)}">{label}</span>{badge}</span></span>')
 
 
 def odds_boxes(odds_yes: Optional[float], odds_no: Optional[float], final: bool = False,
