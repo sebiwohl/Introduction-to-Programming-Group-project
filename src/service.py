@@ -792,11 +792,12 @@ def leaderboard(user_id: str, path=None) -> List[LeaderboardRow]:
 
 
 def set_avatar(user_id: str, avatar: str, path=None) -> User:
-    """Save the user's own profile picture (one of AVATARS) and return the user.
+    """Save the user's own profile picture (one of AVATARS, or "" for no animal) and return the user.
 
     Only the logged-in user's id is passed in, so users can change only their own.
+    With "" the user shows their initial again, as before they picked an animal.
     """
-    if avatar not in AVATARS:
+    if avatar and avatar not in AVATARS:
         raise BettingError("Pick one of the animal pictures.")
     with storage.transaction(path) as data:
         state = _unpack(data)
