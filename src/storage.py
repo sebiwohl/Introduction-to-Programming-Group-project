@@ -33,7 +33,8 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from src.migration import upgrade
-from src.models import EVENT_TYPES, MAX_OPTION_LENGTH, MAX_OPTIONS, MIN_OPTIONS, TYPE_NAMES
+from src.models import (EVENT_TYPES, MAX_FLAG_NOTE_LENGTH, MAX_OPTION_LENGTH, MAX_OPTIONS,
+                        MIN_OPTIONS, TYPE_NAMES)
 
 SCHEMA_VERSION = 3
 MAX_BACKUPS = 20
@@ -150,6 +151,14 @@ def _or_null(predicate: Predicate, value: Any, ids: dict[str, set[str]]) -> bool
     return value is None or predicate(value, ids)
 
 
+def _is_flag_notes(value: Any, ids: dict[str, set[str]]) -> bool:
+    """Return True for {existing user id: trimmed note of 1 to MAX_FLAG_NOTE_LENGTH characters}."""
+    if not isinstance(value, dict):
+        return False
+    return all(_is_ref("users", user_id, ids) and isinstance(note, str) and note == note.strip()
+               and 0 < len(note) <= MAX_FLAG_NOTE_LENGTH for user_id, note in value.items())
+
+
 def _is_text_list(value: Any, ids: dict[str, set[str]]) -> bool:
     """Return True for a list of unique non-empty strings (it may be empty)."""
     return (isinstance(value, list) and all(_is_text(item, ids) for item in value)
@@ -227,6 +236,8 @@ RULES: dict[str, dict[str, Rule]] = {
         ),
         "outcome": (_nullable(partial(_is_choice, ("yes", "no"))), "yes, no or null"),
         "flags": (partial(_is_ref_list, "users"), "a list of unique existing user ids"),
+        "flag_notes": (_is_flag_notes, "a map of existing user ids to trimmed notes of 1 to "
+                       f"{MAX_FLAG_NOTE_LENGTH} characters"),
         "type": (partial(_is_choice, EVENT_TYPES), ", ".join(EVENT_TYPES[:-1]) + f" or {EVENT_TYPES[-1]}"),
         "line": (_nullable(_is_decimal_text), "a decimal number as text, or null"),
         "event_time": (_is_iso_time, "an ISO 8601 date and time with a timezone offset"),
@@ -280,7 +291,7 @@ RULES: dict[str, dict[str, Rule]] = {
 # Fields a record may leave out (added after data was first saved). The names
 # fields exist only on names events: other events are stored without them.
 NAMES_FIELDS = ("options", "multi_winner", "winners")
-OPTIONAL: dict[str, set[str]] = {"users": {"avatar"}, "events": set(NAMES_FIELDS)}
+OPTIONAL: dict[str, set[str]] = {"users": {"avatar"}, "events": {*NAMES_FIELDS, "flag_notes"}}
 
 
 # ---------------------------------------------------------------------------
@@ -530,11 +541,20 @@ def _check_bet_sides(data: Data) -> None:
             raise StorageError(f"bets[{bet['id']}].side must be yes or no, got {bet['side']!r}")
 
 
+def _check_flag_notes(event: Data) -> None:
+    """Check that only members who flagged the event have a flag note on it."""
+    strangers = set(event.get("flag_notes", {})) - set(event["flags"])
+    if strangers:
+        raise StorageError(f"events[{event['id']}].flag_notes has notes from members who did not "
+                           f"flag it: {sorted(strangers)!r}")
+
+
 def _check_events(data: Data) -> None:
-    """Run the names, side, outcome, payout and refund checks for every event."""
+    """Run the names, flag note, side, outcome, payout and refund checks for every event."""
     for event in data["events"]:
         _check_event_type(event)
         _check_names_fields(event)
+        _check_flag_notes(event)
     _check_bet_sides(data)
     for event in data["events"]:
         if not _is_names_event(event):

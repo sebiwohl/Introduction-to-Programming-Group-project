@@ -702,6 +702,10 @@ button {border-radius: 999px !important; font-weight: 600 !important;}
 [class*="st-key-flagline_"] > div {width: auto !important; flex: 0 1 auto;}
 [class*="st-key-flagline_"] > div:first-child {margin-right: auto;}
 .ci-flagnote {font-size: 0.8rem; font-weight: 600; color: #B91C1C;}
+/* the notes members left when flagging: "anna: The result is already known" */
+.ci-flagreasons {display: flex; flex-direction: column; gap: 4px; margin: 6px 0 4px;}
+.ci-flagreason {font-size: 0.8rem; color: #7F1D1D; background: #FFFFFF; border: 1px solid #FECACA;
+  border-left: 3px solid #EF4444; border-radius: 8px; padding: 5px 10px; overflow-wrap: anywhere;}
 [class*="st-key-flagtoo_"] button {min-height: 30px; padding: 0 12px !important;
   border-color: #FCA5A5 !important; color: #B91C1C !important;}
 /* poll votes: thinner, striped, green (keep) and red (delete), unlike the bet bar */

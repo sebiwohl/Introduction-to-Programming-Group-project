@@ -28,7 +28,7 @@ from src.auth import AuthError
 from src.convert import event_from_dict, poll_to_dict, text_to_time
 from src.notifications import notify_group, quote
 from src.models import (
-    STATUS_DELETED, STATUS_OPEN, STATUS_PAUSED, VOTE_DELETE, VOTE_KEEP, Poll,
+    MAX_FLAG_NOTE_LENGTH, STATUS_DELETED, STATUS_OPEN, STATUS_PAUSED, VOTE_DELETE, VOTE_KEEP, Poll,
 )
 
 DELETE_DEADLINE = timedelta(hours=3)
@@ -167,11 +167,25 @@ def poll_threshold(members: int) -> int:
     return max(MIN_FLAGS, math.ceil(members * POLL_SHARE))
 
 
-def flag_event(user_id: str, event_id: str, now: datetime, path=None) -> str:
-    """Flag an open event; return FLAGGED, POLL_OPENED or DELETED.
+def clean_flag_note(note: str) -> str:
+    """Return the flag note trimmed, with runs of spaces and line breaks made one space.
+
+    The note is optional ("" is fine); raise AuthError if it is longer than
+    MAX_FLAG_NOTE_LENGTH characters.
+    """
+    cleaned = " ".join(str(note or "").split())
+    if len(cleaned) > MAX_FLAG_NOTE_LENGTH:
+        raise AuthError(f"The note can be at most {MAX_FLAG_NOTE_LENGTH} characters.")
+    return cleaned
+
+
+def flag_event(user_id: str, event_id: str, now: datetime, path=None, note: str = "") -> str:
+    """Flag an open event, with an optional note saying why; return FLAGGED, POLL_OPENED or DELETED.
 
     Only flags of unrestricted members count, and only they count as members.
+    The note is shown to the group on the event card and in the activity log.
     """
+    note = clean_flag_note(note)
     with storage.transaction(path) as data:
         event = _find_event(data, event_id)
         _check(data, user_id, event, auth.FLAG_EVENT)
@@ -179,6 +193,8 @@ def flag_event(user_id: str, event_id: str, now: datetime, path=None) -> str:
         if user_id in event["flags"]:
             raise AuthError("You have already flagged this event.")
         event["flags"].append(user_id)
+        if note:
+            event.setdefault("flag_notes", {})[user_id] = note
         members = _unrestricted_members(data, event["group_id"])
         flags = len(members.intersection(event["flags"]))
         title = quote(event["title"])
@@ -192,7 +208,8 @@ def flag_event(user_id: str, event_id: str, now: datetime, path=None) -> str:
             _log(data, event, f"Enough flags on {title}: betting is paused. "
                  "Vote in the poll on the Feed.", now)
             return POLL_OPENED
-        _log(data, event, f"{_name(data, user_id)} flagged {title}.", now, skip=[user_id])
+        reason = f": {quote(note)}" if note else "."  # shortened, so the log entry stays short
+        _log(data, event, f"{_name(data, user_id)} flagged {title}{reason}", now, skip=[user_id])
         return FLAGGED
 
 
@@ -264,6 +281,7 @@ def end_due_polls(data: dict, now: datetime) -> int:
             poll["result"] = RESULT_KEPT
             event["status"] = STATUS_OPEN
             event["flags"] = []
+            event.pop("flag_notes", None)  # the notes go with the flags
             _log(data, event, f"The poll on {quote(event['title'])} ended: kept ({votes} for "
                  "delete). Betting is open again.", now)
         ended += 1
