@@ -17,10 +17,10 @@ Nova SBE, Fall 2026, Introduction to Programming, group project.
 
 | Name | Student number | GitHub |
 |---|---|---|
-| TODO | TODO | [sebiwohl](https://github.com/sebiwohl) |
-| TODO | TODO | [Ben1212-cloud](https://github.com/Ben1212-cloud) |
-| TODO | TODO | [AndreFrazao20](https://github.com/AndreFrazao20) |
-| TODO | TODO | [Madalena62587](https://github.com/Madalena62587) |
+| Sebastian Wohlkönig | 74764 | [sebiwohl](https://github.com/sebiwohl) |
+| Ben Joris Schroeder | 79769 | [Ben1212-cloud](https://github.com/Ben1212-cloud) |
+| André Domingos Frazão | 62579 | [AndreFrazao20](https://github.com/AndreFrazao20) |
+| Maria Madalena Arraiano Ganhão | 62587 | [Madalena62587](https://github.com/Madalena62587) |
 
 ## What the app does
 
